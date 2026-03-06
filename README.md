@@ -8,7 +8,7 @@ Official agent templates for [ZWRM](https://zwrm.eu). Each template is a special
 |----------|-------------|-------------|
 | [default](./default) | Full stack — Python, Go, Rust, Bun | `performance-2x` |
 | [go](./go) | Go — gopls, delve, golangci-lint, air | `performance-2x` |
-| [python-api](./python-api) | Python API — FastAPI, SQLAlchemy, PostgreSQL | `performance-2x` |
+| [python-api](./python-api) | Python API — FastAPI, SQLAlchemy, Redis | `performance-2x` |
 | [web](./web) | Web — Bun, pnpm, Playwright, Next.js/Vite | `performance-2x` |
 
 ## Usage
