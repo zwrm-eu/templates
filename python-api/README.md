@@ -1,6 +1,6 @@
 # Python API Template
 
-Backend API development environment with FastAPI and PostgreSQL.
+Backend API development environment with FastAPI.
 
 ## What's Included
 
@@ -9,11 +9,12 @@ Everything from [agent-base](https://github.com/zwrm-eu/zwrm/pkgs/container/agen
 - **Python 3.12** with pip and venv
 - **FastAPI** with uvicorn
 - **SQLAlchemy** (async support) with Alembic migrations
-- **PostgreSQL** client libs (psycopg2, asyncpg)
-- **Redis** client and Celery
 - **httpx** for HTTP client
+- **Celery** with Redis
 - **pytest** with async and coverage plugins
 - **ruff** linter/formatter
+
+For databases, use `zwrm postgres create` to provision a managed PostgreSQL instance.
 
 ## Usage
 
