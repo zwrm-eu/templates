@@ -10,6 +10,9 @@ RUN npx playwright install-deps 2>/dev/null || true
 # -- Global npm tools (install as root to avoid cache permission issues) -------
 RUN npm install -g typescript tsx create-next-app create-vite @biomejs/biome
 
+# Fix npm cache ownership (base image's root npm install leaves root-owned files)
+RUN rm -rf /home/agent/.npm
+
 USER agent
 
 # -- Bun -----------------------------------------------------------------------
