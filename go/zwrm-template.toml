@@ -1,0 +1,8 @@
+[template]
+name = "Go"
+description = "Go development with gopls, delve, golangci-lint, and air."
+author = "zwrm-eu"
+icon = "terminal"
+tags = ["go", "golang", "api", "cli", "backend"]
+default_size = "performance-2x"
+min_size = "performance-1x"
