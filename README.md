@@ -7,7 +7,7 @@ Official agent templates for [ZWRM](https://zwrm.eu). Each template is a special
 | Template | Description | Default Size |
 |----------|-------------|-------------|
 | [default](./default) | Full stack — Python, Go, Rust, Bun | `performance-2x` |
-| [python-ml](./python-ml) | Machine learning — PyTorch, Jupyter, pandas | `performance-4x` |
+| [python-ml](./python-ml) | Machine learning — PyTorch, pandas, scikit-learn | `performance-4x` |
 | [python-api](./python-api) | API development — FastAPI, SQLAlchemy, PostgreSQL | `performance-2x` |
 | [web](./web) | Web development — Bun, pnpm, Playwright | `performance-2x` |
 

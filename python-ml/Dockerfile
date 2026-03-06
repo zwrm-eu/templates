@@ -1,6 +1,6 @@
 FROM ghcr.io/zwrm-eu/agent-base:latest
 
-# Machine learning environment with Python, PyTorch, and Jupyter.
+# Machine learning environment with Python, PyTorch, and data science tools.
 
 USER root
 
@@ -18,11 +18,7 @@ RUN python3 -m pip install --user --no-cache-dir \
     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && python3 -m pip install --user --no-cache-dir \
     numpy pandas scikit-learn matplotlib seaborn \
-    jupyterlab ipywidgets \
     transformers datasets \
     pytest
-
-# -- Convenience alias ---------------------------------------------------------
-RUN echo 'alias jupyter="jupyter lab --ip=0.0.0.0 --no-browser"' >> ~/.bashrc
 
 CMD ["/bin/bash"]
