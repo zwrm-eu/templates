@@ -1,0 +1,8 @@
+[template]
+name = "Web Development"
+description = "Frontend and full-stack web dev with Bun, pnpm, and Playwright."
+author = "zwrm-eu"
+icon = "globe"
+tags = ["javascript", "typescript", "react", "next", "vite", "bun"]
+default_size = "performance-2x"
+min_size = "performance-1x"

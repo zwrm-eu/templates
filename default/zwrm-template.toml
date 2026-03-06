@@ -1,0 +1,8 @@
+[template]
+name = "Full Stack"
+description = "Everything pre-installed: Python, Go, Rust, Bun. Jack of all trades."
+author = "zwrm-eu"
+icon = "box"
+tags = ["python", "go", "rust", "bun", "node"]
+default_size = "performance-2x"
+min_size = "performance-1x"
