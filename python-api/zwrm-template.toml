@@ -1,0 +1,8 @@
+[template]
+name = "Python API"
+description = "API development with FastAPI, SQLAlchemy, and PostgreSQL."
+author = "zwrm-eu"
+icon = "zap"
+tags = ["python", "fastapi", "api", "postgresql", "redis"]
+default_size = "performance-2x"
+min_size = "performance-1x"

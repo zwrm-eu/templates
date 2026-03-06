@@ -1,0 +1,8 @@
+[template]
+name = "Python ML"
+description = "Machine learning with PyTorch, Jupyter, pandas, and scikit-learn."
+author = "zwrm-eu"
+icon = "brain"
+tags = ["python", "ml", "pytorch", "jupyter", "data-science"]
+default_size = "performance-4x"
+min_size = "performance-2x"
