@@ -9,11 +9,6 @@ ENV GO_VERSION=1.22.5
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
     | tar -xz -C /usr/local
 
-# -- PostgreSQL client (common for Go backends) --------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev postgresql-client \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 ENV PATH="/usr/local/go/bin:/home/agent/go/bin:${PATH}"
 
 USER agent
