@@ -1,6 +1,6 @@
 # Python ML Template
 
-Machine learning development environment with PyTorch and Jupyter.
+Machine learning development environment with PyTorch and data science tools.
 
 ## What's Included
 
@@ -8,7 +8,6 @@ Everything from [agent-base](https://github.com/zwrm-eu/zwrm/pkgs/container/agen
 
 - **Python 3.12** with pip and venv
 - **PyTorch** (CPU) with torchvision and torchaudio
-- **Jupyter Lab**
 - **scikit-learn**, **numpy**, **pandas**, **matplotlib**, **seaborn**
 - **Hugging Face** transformers and datasets
 
