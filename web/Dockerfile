@@ -7,6 +7,9 @@ USER root
 # -- Playwright system dependencies -------------------------------------------
 RUN npx playwright install-deps 2>/dev/null || true
 
+# -- Global npm tools (install as root to avoid cache permission issues) -------
+RUN npm install -g typescript tsx create-next-app create-vite @biomejs/biome
+
 USER agent
 
 # -- Bun -----------------------------------------------------------------------
@@ -15,9 +18,6 @@ ENV PATH="/home/agent/.bun/bin:${PATH}"
 
 # -- pnpm ----------------------------------------------------------------------
 RUN corepack enable && corepack prepare pnpm@latest --activate
-
-# -- Global npm tools ----------------------------------------------------------
-RUN npm install -g typescript tsx create-next-app create-vite @biomejs/biome
 
 # -- Playwright ----------------------------------------------------------------
 RUN npx playwright install chromium

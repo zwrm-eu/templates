@@ -7,9 +7,10 @@ USER root
 # -- Python 3.12 ---------------------------------------------------------------
 RUN add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3.12-dev python3-pip \
+    python3.12 python3.12-venv python3.12-dev \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
 # -- Go 1.22 -------------------------------------------------------------------
 ENV GO_VERSION=1.22.5
