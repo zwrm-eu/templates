@@ -296,7 +296,7 @@ To have your template listed in the dashboard gallery:
 
 1. Ensure your template follows the guidelines above
 2. Test it works: `zwrm agent claude --template github.com/yourname/my-template`
-3. Open a pull request to the [zwrm repository](https://github.com/zwrm-eu/zwrm) adding your template to `templates/registry.json`:
+3. Fork the [zwrm repository](https://github.com/zwrm-eu/zwrm) and add your entry to `templates/registry.json`:
 
 ```json
 {
@@ -312,7 +312,9 @@ To have your template listed in the dashboard gallery:
 }
 ```
 
-4. The PR will be reviewed for quality and security before merging
+4. Open a pull request using the **Template Submission** PR template
+5. CI will automatically validate the registry JSON format
+6. Maintainers review the Dockerfile and metadata before merging
 
 ### Registry Requirements
 
@@ -320,4 +322,14 @@ To have your template listed in the dashboard gallery:
 - Repository must be public
 - Must include a `zwrm-template.toml` with at minimum `name` and `description`
 - Dockerfile must build successfully
-- `id` must be unique, lowercase, and use hyphens (e.g., `python-ml`, `rust-embedded`)
+- `id` must be unique, lowercase with hyphens (e.g., `python-ml`, `rust-embedded`)
+- `featured` and `official` must be `false` for community submissions
+
+### Review Criteria
+
+Submissions are reviewed for:
+
+- **Security** — no malicious or unnecessary privileged operations
+- **Quality** — Dockerfile follows best practices (clean apt cache, minimal layers)
+- **Completeness** — metadata, README, and deploy badge present
+- **Uniqueness** — template serves a distinct use case not covered by existing templates
