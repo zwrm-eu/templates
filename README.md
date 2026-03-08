@@ -24,24 +24,16 @@ zwrm agent claude
 
 ## Creating Your Own Template
 
-Create a GitHub repo with a `Dockerfile` that extends the base image:
+See the full [Template Authoring Guide](./CONTRIBUTING.md) for step-by-step instructions, Dockerfile best practices, `zwrm-template.toml` reference, and how to submit your template to the official registry.
+
+Quick version:
 
 ```dockerfile
 FROM ghcr.io/zwrm-eu/agent-base:latest
 USER root
 RUN apt-get update && apt-get install -y your-packages
 USER agent
-RUN pip install your-python-packages
-```
-
-Add an optional `zwrm-template.toml` for metadata:
-
-```toml
-[template]
-name = "My Template"
-description = "What this template is for"
-default_size = "performance-2x"
-tags = ["python", "web"]
+RUN pip install --user your-python-packages
 ```
 
 Then use it: `zwrm agent claude --template github.com/you/your-template`
