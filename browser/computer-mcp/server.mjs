@@ -43,8 +43,13 @@ const modifier = z.string().optional()
   .describe("Modifier keys to hold during the action, xdotool syntax, e.g. 'shift' or 'ctrl+shift'")
 const duration = z.number().min(0).max(MAX_DURATION_S).describe('Seconds')
 
+// One browser: the browser tools' Chromium runs on this desktop, so the model
+// opens pages with them and operates the same window here when it needs
+// pixels. Everything stays visible in the live view (zwrm-eu/zwrm#1680).
 const DESKTOP = `a ${frameW}x${frameH} Linux desktop (X display ${display.name}, openbox window manager). ` +
-  `Start GUI apps from the shell with DISPLAY=${display.name}, e.g. \`DISPLAY=${display.name} chromium https://example.com &\`.`
+  'The web browser on it is the one the browser tools drive: open a page with mcp__browser__browser_navigate, ' +
+  'then use these tools on that same window when you need to work by sight. Other GUI apps can be started ' +
+  `from the shell with DISPLAY=${display.name}.`
 
 const TOOLS = {
   screenshot: { description: `Take a screenshot of ${DESKTOP} Call this first to see the screen.`, input: {} },

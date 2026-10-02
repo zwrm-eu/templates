@@ -14,9 +14,14 @@ MCP servers, on every harness (Claude, Codex, OpenCode, pi):
   mouse and keyboard (`mcp__computer__screenshot`, `left_click`, `type`,
   `key`, `scroll`, `zoom`, …). It mirrors Anthropic's computer-use toolset and
   is ported from Anthropic's reference implementation. For desktop apps,
-  canvas-heavy pages and sites that resist automation. The desktop starts on
-  the first call; launch apps on it from the shell with `DISPLAY=:99`, e.g.
-  `DISPLAY=:99 chromium https://example.com &`.
+  canvas-heavy pages and sites that resist automation. It works on the same
+  desktop and the same browser window: the agent opens a page with the
+  `browser` tools, then clicks and types in it by sight. Other GUI apps can be
+  started from the shell with `DISPLAY=:99`.
+
+There is one browser, and it always runs visibly on the desktop, so every
+page the agent opens through its tools shows in the live view. (Only a script
+the agent writes and runs headless from its shell would not.)
 
 **Live view.** In the dashboard, the chat's side panel shows the desktop live
 (VNC, relayed by the platform; nothing is exposed from the VM). Anyone who can
@@ -38,8 +43,6 @@ Everything from [agent-base](https://github.com/zwrm-eu/zwrm/pkgs/container/agen
 - **Playwright MCP** (pinned) with its matching **Chromium** in `/opt/ms-playwright`
 - **Computer-use server** in `/opt/zwrm-computer-mcp` with Xvfb, openbox,
   xdotool, scrot and ImageMagick
-- `chromium`: the same Chromium, headed, for the desktop (own profile in
-  `~/.zwrm/browser/desktop-profile`)
 - The system libraries and fonts Chromium needs
 
 The browser profile persists on the workspace volume
