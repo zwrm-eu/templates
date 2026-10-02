@@ -1,0 +1,14 @@
+{
+  "command": "/usr/local/bin/zwrm-browser-mcp",
+  "args": [
+    "--browser", "chromium",
+    "--headless",
+    "--no-sandbox",
+    "--viewport-size", "1280x800",
+    "--output-dir", "/home/agent/.zwrm/browser/output",
+    "--output-max-size", "104857600"
+  ],
+  "env": {
+    "PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright"
+  }
+}
