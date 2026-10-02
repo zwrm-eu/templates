@@ -1,0 +1,18 @@
+{
+  "command": "/usr/local/bin/playwright-mcp",
+  "args": [
+    "--browser",
+    "chromium",
+    "--headless",
+    "--no-sandbox",
+    "--viewport-size",
+    "1280x800",
+    "--user-data-dir",
+    "/home/agent/.zwrm/browser/profile",
+    "--output-dir",
+    "/home/agent/.zwrm/browser/output"
+  ],
+  "env": {
+    "PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright"
+  }
+}
