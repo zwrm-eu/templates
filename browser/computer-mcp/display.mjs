@@ -6,12 +6,16 @@
 // agent opened on the desktop should outlive it (the next session finds the
 // same windows). A later server reuses a running desktop.
 //
-// After a VM reboot /tmp survives (it lives on the workspace volume), so
-// Xvfb's lock file and socket from the previous boot are still there. Xvfb
-// refuses to start while its lock names a live pid, and after a reboot that pid
-// can belong to anything. A lock whose pid is not a running Xvfb is stale and
-// is cleared before starting. Suspend/restore needs none of this: the whole
-// guest, desktop included, resumes as it was.
+// A hard-killed Xvfb (OOM, kill -9) leaves its lock file and socket behind,
+// and Xvfb refuses to start while its lock names a live pid, which by then can
+// belong to anything. A lock whose pid is not a running Xvfb is stale and is
+// cleared before starting. (Init wipes /tmp on every boot, so a reboot alone
+// never leaves one.) Suspend/restore needs none of this: the whole guest,
+// desktop included, resumes as it was.
+//
+// The desktop processes get a minimal environment, not the spawning
+// session's: they outlive that session, and its env carries session
+// credentials.
 
 import { execFile, spawn } from 'node:child_process'
 import { readFile, rm } from 'node:fs/promises'
@@ -34,6 +38,15 @@ export class Display {
     this.log = log
     this.name = `:${num}`
     this.env = { ...process.env, DISPLAY: this.name }
+    const home = process.env.HOME || '/home/agent'
+    this.desktopEnv = {
+      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+      HOME: home,
+      USER: process.env.USER || 'agent',
+      LANG: process.env.LANG || 'C.UTF-8',
+      DISPLAY: this.name,
+    }
+    this.desktopCwd = home
     this.starting = null
   }
 
@@ -75,7 +88,7 @@ export class Display {
   }
 
   #detach(cmd, args) {
-    const child = spawn(cmd, args, { env: this.env, detached: true, stdio: 'ignore' })
+    const child = spawn(cmd, args, { env: this.desktopEnv, cwd: this.desktopCwd, detached: true, stdio: 'ignore' })
     child.on('error', (err) => this.log(`${cmd} failed to start: ${err.message}`))
     child.unref()
   }

@@ -40,12 +40,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     imagemagick \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY computer-mcp/ /opt/zwrm-computer-mcp/
+# Dependencies first, so editing the server's source doesn't re-run npm ci.
+COPY computer-mcp/package.json computer-mcp/package-lock.json /opt/zwrm-computer-mcp/
 RUN cd /opt/zwrm-computer-mcp \
     && npm ci --omit=dev --no-audit --no-fund \
-    && npm cache clean --force \
-    && rm -rf test \
-    && chmod -R a+rX /opt/zwrm-computer-mcp
+    && npm cache clean --force
+COPY computer-mcp/ /opt/zwrm-computer-mcp/
+RUN rm -rf /opt/zwrm-computer-mcp/test && chmod -R a+rX /opt/zwrm-computer-mcp
 
 # Login shells (SSH, terminal) see the same browsers. Only scripts on this
 # exact Playwright build find one there; other versions expect other revisions.

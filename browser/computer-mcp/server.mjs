@@ -64,14 +64,14 @@ const TOOLS = {
     description: "Press a key or key chord, xdotool keysym syntax: 'Return', 'Tab', 'ctrl+a', 'ctrl+shift+t', 'Page_Down'.",
     input: { text: z.string().describe('Key or chord'), repeat: z.number().int().min(1).max(KEY_REPEAT_MAX).optional().describe('Press it this many times (default 1)') },
   },
-  hold_key: { description: 'Hold a key or chord down for a duration, then release it.', input: { text: z.string().describe('Key or chord'), duration } },
+  hold_key: { description: 'Hold a key or chord down for a duration, then release it.', input: { text: z.string().describe("xdotool keysyms joined by '+', e.g. 'shift' or 'ctrl+Down'"), duration } },
   type: { description: 'Type a string of text at the keyboard focus.', input: { text: z.string() } },
   scroll: {
     description: 'Scroll the mouse wheel, optionally after moving to a position.',
     input: {
       coordinate: coordinate.optional(),
       scroll_direction: z.enum(['up', 'down', 'left', 'right']),
-      scroll_amount: z.number().int().min(0).describe('Wheel clicks'),
+      scroll_amount: z.number().int().min(1).describe('Wheel clicks'),
       text: modifier,
     },
   },
@@ -104,5 +104,18 @@ for (const [action, spec] of Object.entries(TOOLS)) {
     }
   })
 }
+
+// Release anything held when the session ends, so the next session's desktop
+// does not start with a key or button stuck down.
+let closing = false
+const shutdown = async () => {
+  if (closing) return
+  closing = true
+  await computer.release().catch(() => {})
+  process.exit(0)
+}
+process.stdin.on('end', shutdown)
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
 
 await server.connect(new StdioServerTransport())

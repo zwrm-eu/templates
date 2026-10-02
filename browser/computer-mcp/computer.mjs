@@ -21,7 +21,17 @@ import { run as defaultRun } from './display.mjs'
 export const TYPING_DELAY_MS = 12
 export const TYPING_GROUP_SIZE = 50
 export const KEY_REPEAT_MAX = 100
-export const MAX_DURATION_S = 100
+// wait / hold_key sleep inside one MCP request, and the MCP SDK times a request
+// out at 60 s by default (the pi/codex bridge sets no longer timeout). The
+// reference allows 100 s; anything over ~58 s would come back as a timeout
+// while the server kept sleeping, delaying the next call.
+export const MAX_DURATION_S = 50
+
+// A held modifier chord or held key: xdotool keysyms joined by '+'
+// ('shift', 'ctrl+shift', 'Shift_L'). Validated because it lands in an
+// xdotool command chain as a bare word, where 'exec' or '--help' would be
+// parsed as a command or option instead of a key.
+const KEYSYM_CHORD = /^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/
 
 // Sizes above XGA/WXGA are not recommended: screenshots are scaled down to the
 // target with the display's aspect ratio (reference MAX_SCALING_TARGETS).
@@ -75,8 +85,11 @@ export class Computer {
         break
       }
     }
+    // Pixels run 0..width-1: the pointer clamps at width-1, so accepting
+    // `width` would make moveTo see a position it can never reach (and
+    // `mousemove --sync` would stall there).
     if (!target) {
-      if (source === 'api' && (x > this.width || y > this.height)) {
+      if (source === 'api' && (x >= this.width || y >= this.height)) {
         throw new ToolError(`Coordinates ${x}, ${y} are out of bounds`)
       }
       return [x, y]
@@ -85,8 +98,8 @@ export class Computer {
     const fy = target.height / this.height
     if (source === 'api') {
       const [w, h] = this.screenshotSize()
-      if (x > w || y > h) throw new ToolError(`Coordinates ${x}, ${y} are out of bounds`)
-      return [Math.round(x / fx), Math.round(y / fy)]
+      if (x >= w || y >= h) throw new ToolError(`Coordinates ${x}, ${y} are out of bounds`)
+      return [Math.min(Math.round(x / fx), this.width - 1), Math.min(Math.round(y / fy), this.height - 1)]
     }
     return [Math.round(x * fx), Math.round(y * fy)]
   }
@@ -123,16 +136,17 @@ export class Computer {
         return { output: `X=${sx},Y=${sy}` }
       }
       case 'mouse_move':
-        return this.act(await this.moveTo(this.coords(a.coordinate)))
+        return this.act(await this.moveTo(this.coords(a.coordinate)), action)
       case 'left_mouse_down':
       case 'left_mouse_up':
-        return this.act([action === 'left_mouse_down' ? 'mousedown' : 'mouseup', '1'])
+        this.buttonHeld = action === 'left_mouse_down'
+        return this.act([action === 'left_mouse_down' ? 'mousedown' : 'mouseup', '1'], action)
       case 'left_click_drag': {
         const start = this.coords(a.start_coordinate, 'start_coordinate')
         const end = this.coords(a.coordinate)
         const drag = end[0] === start[0] && end[1] === start[1] ? [] : ['mousemove', '--sync', ...end]
         return this.act(this.withModifier(a.text,
-          [...(await this.moveTo(start)), 'mousedown', '1', ...drag, 'mouseup', '1']))
+          [...(await this.moveTo(start)), 'mousedown', '1', ...drag, 'mouseup', '1']), action)
       }
       case 'key': {
         const text = this.requireText(a.text, action)
@@ -140,14 +154,21 @@ export class Computer {
         if (!Number.isInteger(repeat) || repeat < 1 || repeat > KEY_REPEAT_MAX) {
           throw new ToolError(`repeat must be an integer between 1 and ${KEY_REPEAT_MAX}`)
         }
-        return this.act(['key', '--', ...Array(repeat).fill(text)])
+        return this.act(['key', '--', ...Array(repeat).fill(text)], action)
       }
       case 'hold_key': {
-        const text = this.requireText(a.text, action)
+        const text = this.chord(this.requireText(a.text, action), 'text')
         const duration = this.duration(a.duration)
-        await this.xdotool(['keydown', text])
-        await this.sleep(duration * 1000)
-        return this.act(['keyup', text])
+        const down = await this.xdotool(['keydown', text])
+        if (!down.ok) throw new ToolError(`hold_key failed: ${down.stderr.trim()}`)
+        this.keyHeld = text
+        try {
+          await this.sleep(duration * 1000)
+        } finally {
+          await this.xdotool(['keyup', text])
+          this.keyHeld = null
+        }
+        return this.act([], action)
       }
       case 'type': {
         const text = this.requireText(a.text, action)
@@ -161,10 +182,11 @@ export class Computer {
       case 'scroll': {
         const direction = a.scroll_direction
         if (!SCROLL_BUTTON[direction]) throw new ToolError(`scroll_direction must be 'up', 'down', 'left', or 'right'`)
+        // xdotool rejects --repeat 0, so (unlike the reference) 0 is invalid.
         const amount = a.scroll_amount
-        if (!Number.isInteger(amount) || amount < 0) throw new ToolError('scroll_amount must be a non-negative integer')
+        if (!Number.isInteger(amount) || amount < 1) throw new ToolError('scroll_amount must be a positive integer')
         const move = a.coordinate != null ? await this.moveTo(this.coords(a.coordinate)) : []
-        return this.act([...move, ...this.withModifier(a.text, ['click', '--repeat', String(amount), SCROLL_BUTTON[direction]])])
+        return this.act([...move, ...this.withModifier(a.text, ['click', '--repeat', String(amount), SCROLL_BUTTON[direction]])], action)
       }
       case 'wait':
         await this.sleep(this.duration(a.duration) * 1000)
@@ -174,7 +196,7 @@ export class Computer {
       default:
         if (CLICK_ARGS[action]) {
           const move = a.coordinate != null ? await this.moveTo(this.coords(a.coordinate)) : []
-          return this.act([...move, ...this.withModifier(a.text, ['click', ...CLICK_ARGS[action]])])
+          return this.act([...move, ...this.withModifier(a.text, ['click', ...CLICK_ARGS[action]])], action)
         }
         throw new ToolError(`Invalid action: ${action}`)
     }
@@ -203,9 +225,29 @@ export class Computer {
     return ['mousemove', '--sync', x, y]
   }
 
+  chord(text, name) {
+    if (!KEYSYM_CHORD.test(text)) {
+      throw new ToolError(`${name} must be xdotool keysyms joined by '+', e.g. 'shift' or 'ctrl+shift'`)
+    }
+    return text
+  }
+
   // withModifier wraps xdotool steps in keydown/keyup of a held chord.
   withModifier(text, steps) {
-    return text ? ['keydown', text, ...steps, 'keyup', text] : steps
+    if (!text) return steps
+    const chord = this.chord(text, 'text')
+    return ['keydown', chord, ...steps, 'keyup', chord]
+  }
+
+  // release lets go of anything this server left pressed. The desktop
+  // outlives the server (and the session), so a key or button still down
+  // when it exits would stay down for the next session. Best effort: called
+  // on shutdown, nothing to do after a SIGKILL.
+  async release() {
+    if (this.keyHeld) await this.xdotool(['keyup', this.keyHeld])
+    if (this.buttonHeld) await this.xdotool(['mouseup', '1'])
+    this.keyHeld = null
+    this.buttonHeld = false
   }
 
   xdotool(args) {
@@ -213,10 +255,10 @@ export class Computer {
   }
 
   // act runs one xdotool chain, lets the UI settle, and returns a screenshot.
-  async act(args) {
+  async act(args, action) {
     if (args.length) {
       const r = await this.xdotool(args)
-      if (!r.ok) throw new ToolError(`xdotool ${args[0]} failed: ${r.stderr.trim()}`)
+      if (!r.ok) throw new ToolError(`${action} failed: ${r.stderr.trim()}`)
     }
     await this.sleep(this.screenshotDelayMs)
     return { image: (await this.screenshot()).image }

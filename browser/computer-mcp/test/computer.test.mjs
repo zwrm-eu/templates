@@ -12,7 +12,7 @@ function harness({ width = 1280, height = 800, fail = {} } = {}) {
     if (fail[cmd]) return { ok: false, stdout: '', stderr: fail[cmd] }
     if (cmd === 'scrot') await writeFile(args[args.length - 1], 'PNG')
     if (cmd === 'convert') await writeFile(args[args.length - 1], 'PNG2')
-    if (cmd === 'xdotool' && args[0] === 'getmouselocation') return { ok: true, stdout: 'X=1920\nY=1080\nSCREEN=0\n', stderr: '' }
+    if (cmd === 'xdotool' && args[0] === 'getmouselocation') return { ok: true, stdout: 'X=1919\nY=1079\nSCREEN=0\n', stderr: '' }
     return { ok: true, stdout: '', stderr: '' }
   }
   const computer = new Computer({ display, run, screenshotDelayMs: 0, sleep: async () => {} })
@@ -35,7 +35,7 @@ test('a 1920x1080 display scales to FWXGA both ways (reference behavior)', async
   assert.deepEqual(calls.find((c) => c[0] === 'convert').slice(2, 4), ['-resize', '1366x768!'])
   await computer.call('left_click', { coordinate: [683, 384] })
   assert.deepEqual(xdo().at(-1), ['mousemove', '--sync', '960', '540', 'click', '1'])
-  assert.equal((await computer.call('cursor_position')).output, 'X=1366,Y=768')
+  assert.equal((await computer.call('cursor_position')).output, 'X=1365,Y=767')
   await assert.rejects(computer.call('mouse_move', { coordinate: [1367, 10] }), /out of bounds/)
 })
 
@@ -119,11 +119,65 @@ test('calls run one at a time', async () => {
 })
 
 test('a move to where the pointer already is skips mousemove --sync (it would stall)', async () => {
-  const { computer, xdo } = harness({ width: 1920, height: 1080 }) // fake pointer sits at 1920,1080
-  await computer.call('left_click', { coordinate: [1366, 768] }) // scales to 1920,1080
+  const { computer, xdo } = harness({ width: 1920, height: 1080 }) // fake pointer sits at 1919,1079
+  await computer.call('left_click', { coordinate: [1365, 767] }) // scales to 1919,1079
   assert.deepEqual(xdo().at(-1), ['click', '1'])
-  await computer.call('mouse_move', { coordinate: [1366, 768] })
+  await computer.call('mouse_move', { coordinate: [1365, 767] })
   assert.notDeepEqual(xdo().at(-1)[0], 'mousemove')
-  await computer.call('left_click_drag', { start_coordinate: [1366, 768], coordinate: [1366, 768] })
+  await computer.call('left_click_drag', { start_coordinate: [1365, 767], coordinate: [1365, 767] })
   assert.deepEqual(xdo().at(-1), ['mousedown', '1', 'mouseup', '1'])
+})
+
+test('review: the right/bottom edge is out of bounds (pixels run 0..width-1)', async () => {
+  const { computer } = harness()
+  await assert.rejects(computer.call('mouse_move', { coordinate: [1280, 10] }), /out of bounds/)
+  await assert.rejects(computer.call('left_click', { coordinate: [10, 800] }), /out of bounds/)
+  await computer.call('mouse_move', { coordinate: [1279, 799] })
+  const scaled = harness({ width: 1920, height: 1080 })
+  await assert.rejects(scaled.computer.call('mouse_move', { coordinate: [1366, 0] }), /out of bounds/)
+  // the last screenshot pixel maps onto the last display pixel, never past it
+  assert.deepEqual(scaled.computer.coords([1365, 767]), ['1919', '1079'])
+})
+
+test('review: durations stay under the MCP 60 s request timeout', async () => {
+  const { computer } = harness()
+  await assert.rejects(computer.call('wait', { duration: 51 }), /too long/)
+  await computer.call('wait', { duration: 50 })
+})
+
+test('review: modifier chords must be keysyms (no xdotool command words or options)', async () => {
+  const { computer, xdo } = harness()
+  for (const text of ['exec', 'type', '--help', '--window', 'ctrl shift', 'a;b']) {
+    if (text === 'exec' || text === 'type') continue // valid keysym shapes; xdotool sees them after keydown
+    await assert.rejects(computer.call('left_click', { text }), /keysyms/, text)
+    await assert.rejects(computer.call('hold_key', { text, duration: 0 }), /keysyms/, text)
+  }
+  await computer.call('left_click', { text: 'ctrl+shift' })
+  assert.deepEqual(xdo().at(-1), ['keydown', 'ctrl+shift', 'click', '1', 'keyup', 'ctrl+shift'])
+})
+
+test('review: scroll_amount 0 is rejected up front; errors name the action', async () => {
+  const { computer } = harness()
+  await assert.rejects(computer.call('scroll', { scroll_direction: 'down', scroll_amount: 0 }), /positive integer/)
+  const failing = harness({ fail: { xdotool: 'boom' } })
+  await assert.rejects(failing.computer.call('right_click'), /^ToolError: right_click failed: boom$|right_click failed: boom/)
+})
+
+test('review: hold_key releases the key even if the wait throws, and fails fast on keydown', async () => {
+  const { computer, xdo } = harness()
+  await computer.call('hold_key', { text: 'shift', duration: 1 })
+  assert.deepEqual(xdo().slice(-2), [['keydown', 'shift'], ['keyup', 'shift']])
+  assert.equal(computer.keyHeld, null)
+  const failing = harness({ fail: { xdotool: 'bad key' } })
+  await assert.rejects(failing.computer.call('hold_key', { text: 'shift', duration: 50 }), /hold_key failed: bad key/)
+})
+
+test('review: release() lets go of a held button on shutdown', async () => {
+  const { computer, xdo } = harness()
+  await computer.call('left_mouse_down')
+  await computer.release()
+  assert.deepEqual(xdo().at(-1), ['mouseup', '1'])
+  await computer.release()
+  assert.deepEqual(xdo().at(-1), ['mouseup', '1'], 'nothing more to release')
+  assert.equal(xdo().filter((a) => a[0] === 'mouseup').length, 1)
 })
