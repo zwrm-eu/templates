@@ -71,10 +71,32 @@ export function parseControl(text, now = Date.now()) {
   return holder === 'user' && Number.isFinite(until) && until > now && until <= now + MAX_LEASE_MS ? 'user' : 'agent'
 }
 
+// What the model is told about take-over (zwrm-eu/zwrm#1687). The pause must
+// read as temporary, with a way to learn it ended: in the first hardware test
+// a model that was refused once would not call the tool again even after
+// control came back. wait is that way: while a person holds control every
+// observe result says so, and the first result after a hand-back says it is
+// over, so a model waiting it out learns the moment it may continue.
 export const USER_HAS_CONTROL =
-  'A person has taken control of this desktop and is using it right now. Do not send input. ' +
-  'You can still observe: call wait (e.g. 30 seconds) and take a screenshot to see what they did, ' +
-  'then continue once they hand control back.'
+  'A person has taken control of this desktop and is using it right now, so your input is paused. ' +
+  'This is temporary: call wait (e.g. 30 seconds) to watch; its result says when control is handed ' +
+  'back to you. Then carry on with your task.'
+export const USER_TOOK_CONTROL =
+  'A person has taken control of the desktop; you can only observe for now. Call wait to keep ' +
+  'watching; its result will say when control is handed back.'
+export const USER_STILL_HAS_CONTROL =
+  'A person still has control of the desktop; you can only observe. Call wait again to keep watching; ' +
+  'its result will say when control is handed back.'
+export const CONTROL_RETURNED =
+  'Control of the desktop has been handed back to you, so you can use it again. Look at this ' +
+  'screenshot before acting: the person may have changed things.'
+export const CONTROL_RETURNED_AFTER_INPUT =
+  'Control of the desktop had been handed back to you, so this action ran, but on a screen the ' +
+  'person may have changed. Check this screenshot before continuing.'
+// wait always states the holder: a resumed session (a new server process)
+// has no memory of an earlier take-over, and silence after "its result will
+// say when control is handed back" would leave the model guessing.
+export const AGENT_HAS_CONTROL = 'You have control of the desktop.'
 
 export class Computer {
   constructor({ display, run = defaultRun, screenshotDelayMs = 2000, sleep, controlFile = CONTROL_FILE } = {}) {
@@ -147,14 +169,36 @@ export class Computer {
   // { output?, error?, image? } with image as base64 PNG.
   call(action, input = {}) {
     const p = this.queue.then(async () => {
-      if (!OBSERVE_ACTIONS.has(action) && (await this.controlHolder()) === 'user') {
+      const observe = OBSERVE_ACTIONS.has(action)
+      const before = await this.controlHolder()
+      if (!observe && before === 'user') {
+        this.sawUserControl = true
         throw new ToolError(USER_HAS_CONTROL)
       }
       await this.display.ensure()
-      return this.#dispatch(action, input || {})
+      const result = await this.#dispatch(action, input || {})
+      // Read control again after an observation: a wait may span the
+      // hand-back, and its result is what tells the model.
+      return this.#withControlNote(result, observe ? await this.controlHolder() : before, action)
     })
     this.queue = p.catch(() => {})
     return p
+  }
+
+  // withControlNote prefixes a result with the take-over state the model
+  // needs: still observing, or control just came back (once).
+  #withControlNote(result, holder, action) {
+    let note = ''
+    if (holder === 'user') {
+      note = this.sawUserControl ? USER_STILL_HAS_CONTROL : USER_TOOK_CONTROL
+      this.sawUserControl = true
+    } else if (this.sawUserControl) {
+      this.sawUserControl = false
+      note = OBSERVE_ACTIONS.has(action) ? CONTROL_RETURNED : CONTROL_RETURNED_AFTER_INPUT
+    } else if (action === 'wait') {
+      note = AGENT_HAS_CONTROL
+    }
+    return note ? { ...result, output: [note, result.output].filter(Boolean).join('\n') } : result
   }
 
   async #dispatch(action, a) {

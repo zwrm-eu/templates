@@ -21,8 +21,9 @@ MCP servers, on every harness (Claude, Codex, OpenCode, pi):
 use the chat can watch; one person at a time can **take control** and use the
 desktop with their own mouse and keyboard (the platform only passes input from
 the person holding control). While they hold it, the agent's `computer` tools
-refuse input and tell the model to wait, and screenshots keep working so it can
-see what was done. This pause is cooperative: it stops the agent's computer-use
+refuse input and tell the model to wait; screenshots keep working so it can
+see what was done, and its next observation after the hand-back tells it
+control is back. This pause is cooperative: it stops the agent's computer-use
 tools, not commands the agent runs in its shell. Control returns to the agent
 when handed back, or on its own about 90 s after the person's browser goes
 away. An org admin viewing a member's private chat can watch but not take
