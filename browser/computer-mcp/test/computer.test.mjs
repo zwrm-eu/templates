@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { Computer, ToolError, USER_HAS_CONTROL, parseControl } from '../computer.mjs'
+import { AGENT_HAS_CONTROL, CONTROL_RETURNED, CONTROL_RETURNED_AFTER_INPUT, Computer, ToolError, USER_HAS_CONTROL, USER_STILL_HAS_CONTROL, USER_TOOK_CONTROL, parseControl } from '../computer.mjs'
 
 // A fake display + runner: records every command, "captures" a tiny PNG.
 function harness({ width = 1280, height = 800, fail = {} } = {}) {
@@ -209,4 +209,51 @@ test('parseControl matches agentd: only an unexpired user lease counts', () => {
   assert.equal(parseControl('user Infinity', 1000), 'agent')
   assert.equal(parseControl(`user ${1000 + 600_000} u1`, 1000), 'agent', 'never beyond one lease window')
   assert.equal(parseControl(`user ${1000 + 90_000} u1`, 1000), 'user', 'the agentd format (with user id) reads as user')
+})
+
+test('take-over: observe results say control is still held, then that it came back (#1687)', async () => {
+  const { mkdtemp, writeFile: wf } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(`${tmpdir()}/ctl-`)
+  const controlFile = `${dir}/control`
+  const { computer: base } = harness()
+  let onSleep = async () => {}
+  const computer = new Computer({ display: base.display, run: base.run, screenshotDelayMs: 0, sleep: (ms) => onSleep(ms), controlFile })
+
+  assert.equal((await computer.call('screenshot')).output, undefined, 'no note when nobody ever took control')
+  assert.equal((await computer.call('wait', { duration: 0 })).output, AGENT_HAS_CONTROL, 'wait always states the holder')
+
+  await wf(controlFile, `user ${Date.now() + 60_000} u1\n`)
+  assert.equal((await computer.call('screenshot')).output, USER_TOOK_CONTROL, 'the first observation says it was just taken')
+  await assert.rejects(computer.call('left_click', { coordinate: [1, 1] }), (e) => e.message === USER_HAS_CONTROL)
+  assert.match(USER_HAS_CONTROL, /temporary/)
+  assert.equal((await computer.call('screenshot')).output, USER_STILL_HAS_CONTROL)
+
+  // The hand-back happens DURING the wait: its result reports it.
+  onSleep = async () => { await wf(controlFile, 'agent\n') }
+  const waited = await computer.call('wait', { duration: 30 })
+  assert.equal(waited.output, CONTROL_RETURNED)
+  assert.ok(waited.image)
+  onSleep = async () => {}
+
+  // Said once only; input works again without a note.
+  const clicked = await computer.call('left_click', { coordinate: [1, 1] })
+  assert.equal(clicked.output, undefined)
+  assert.equal((await computer.call('screenshot')).output, undefined)
+})
+
+test('take-over: an input retried after the hand-back says it ran on a possibly changed screen', async () => {
+  const { mkdtemp, writeFile: wf } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(`${tmpdir()}/ctl-`)
+  const controlFile = `${dir}/control`
+  const { computer: base } = harness()
+  const computer = new Computer({ display: base.display, run: base.run, screenshotDelayMs: 0, sleep: async () => {}, controlFile })
+  await wf(controlFile, `user ${Date.now() + 60_000} u1\n`)
+  await assert.rejects(computer.call('left_click', { coordinate: [1, 1] }), /input is paused/)
+  await wf(controlFile, 'agent\n')
+  const clicked = await computer.call('left_click', { coordinate: [1, 1] })
+  assert.equal(clicked.output, CONTROL_RETURNED_AFTER_INPUT)
+  assert.ok(clicked.image)
+  assert.equal((await computer.call('screenshot')).output, undefined, 'said once')
 })
