@@ -1,7 +1,9 @@
 FROM ghcr.io/zwrm-eu/agent-base:latest
 
 # Browser agent (zwrm-eu/zwrm#1674): a real Chromium the agent drives through
-# the `browser` MCP server (Playwright MCP), on every harness.
+# the `browser` MCP server (Playwright MCP), and a virtual desktop it operates
+# by screenshot, mouse and keyboard through the `computer` MCP server, on
+# every harness.
 #
 # Runtime notes for template authors reading this as an example:
 #  - Dockerfile ENV does NOT reach the running VM (the init script is PID 1,
@@ -25,6 +27,26 @@ RUN npm install -g @playwright/mcp@0.0.83 \
     && npm cache clean --force \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# -- Computer-use desktop (zwrm-eu/zwrm#1678) ----------------------------------
+# Xvfb: the virtual display. openbox: a minimal window manager, so new windows
+# get focus and stacking. xdotool + scrot: input and screenshots. imagemagick:
+# zoom crops (and resizing, if the display is ever larger than 1280x800).
+# The `computer` MCP server starts the desktop on its first call.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    openbox \
+    xdotool \
+    scrot \
+    imagemagick \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY computer-mcp/ /opt/zwrm-computer-mcp/
+RUN cd /opt/zwrm-computer-mcp \
+    && npm ci --omit=dev --no-audit --no-fund \
+    && npm cache clean --force \
+    && rm -rf test \
+    && chmod -R a+rX /opt/zwrm-computer-mcp
+
 # Login shells (SSH, terminal) see the same browsers. Only scripts on this
 # exact Playwright build find one there; other versions expect other revisions.
 RUN echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' > /etc/profile.d/playwright.sh
@@ -34,9 +56,9 @@ RUN echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' > /etc/profile.d/p
 # harness. --no-sandbox in the manifest: Chromium's own sandbox needs user
 # namespaces the guest kernel may not offer; the Firecracker VM is the
 # isolation boundary.
-COPY bin/zwrm-browser-mcp /usr/local/bin/zwrm-browser-mcp
+COPY bin/zwrm-browser-mcp bin/chromium /usr/local/bin/
 COPY mcp.d/ /etc/zwrm/mcp.d/
-RUN chmod 755 /usr/local/bin/zwrm-browser-mcp /etc/zwrm /etc/zwrm/mcp.d \
+RUN chmod 755 /usr/local/bin/zwrm-browser-mcp /usr/local/bin/chromium /etc/zwrm /etc/zwrm/mcp.d \
     && chmod 644 /etc/zwrm/mcp.d/*.json
 
 USER agent

@@ -1,0 +1,14 @@
+{
+  "name": "zwrm-computer-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Computer-use MCP server for zwrm agent VMs: screenshots and mouse/keyboard on an Xvfb desktop (Anthropic computer toolset, ported).",
+  "type": "module",
+  "bin": { "zwrm-computer-mcp": "server.mjs" },
+  "scripts": { "test": "node --test 'test/*.test.mjs'" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "license": "MIT"
+}
