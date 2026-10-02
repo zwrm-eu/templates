@@ -5,4 +5,4 @@ author = "zwrm-eu"
 icon = "globe"
 tags = ["browser", "playwright", "chromium", "automation", "computer-use", "scraping"]
 default_size = "performance-2x"
-min_size = "performance-1x"
+min_size = "performance-2x"

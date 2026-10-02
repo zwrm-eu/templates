@@ -11,12 +11,12 @@ page's accessibility snapshot, take screenshots, manage tabs, and more.
 Everything from [agent-base](https://github.com/zwrm-eu/zwrm/pkgs/container/agent-base) plus:
 
 - **Playwright MCP** (pinned) with its matching **Chromium** in `/opt/ms-playwright`
-- **X display stack** for computer use and the live view: Xvfb, openbox, xdotool, scrot, x11vnc, websockify
-- Fonts for real-world pages (Liberation, Noto Color Emoji, plus Playwright's set)
+- The system libraries and fonts Chromium needs
 
 The browser profile persists on the workspace volume
 (`~/.zwrm/browser/profile`), so logins and cookies survive between sessions.
-Snapshots and screenshots land in `~/.zwrm/browser/output`.
+Snapshots and screenshots land in `~/.zwrm/browser/output`, capped at 100 MB
+(oldest files are evicted first).
 
 ## Usage
 
@@ -25,8 +25,10 @@ zwrm agent claude --template github.com/zwrm-eu/templates/browser
 zwrm agent claude researcher --template github.com/zwrm-eu/templates/browser
 ```
 
-Your own scripts can use the same browsers: `PLAYWRIGHT_BROWSERS_PATH` is set
-for SSH and terminal shells.
+Scripts written against the same Playwright build (the one bundled with
+Playwright MCP) can reuse the installed Chromium: `PLAYWRIGHT_BROWSERS_PATH`
+points at it in SSH and terminal shells. Other Playwright versions expect a
+different browser revision and need their own `playwright install`.
 
 ## Notes
 
