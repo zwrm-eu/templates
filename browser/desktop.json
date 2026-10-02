@@ -1,0 +1,7 @@
+{
+  "start": ["/usr/local/bin/node", "/opt/zwrm-computer-mcp/desktop.mjs", "start"],
+  "vnc_port": 5900,
+  "control_file": "/tmp/.zwrm-desktop-control",
+  "width": 1280,
+  "height": 800
+}

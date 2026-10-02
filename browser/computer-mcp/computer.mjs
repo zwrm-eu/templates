@@ -54,15 +54,46 @@ const SCROLL_BUTTON = { up: '4', down: '5', left: '6', right: '7' }
 
 export class ToolError extends Error {}
 
+// Take-over (zwrm-eu/zwrm#1680): while a member watching the live view holds
+// input, zwrm-agentd's control file reads "user <expiry-ms>" and the agent may
+// only observe. The lease lapses on its own if the member's browser goes away,
+// so a stale file never locks the agent out. Same rule as agentd's
+// parseControl.
+export const CONTROL_FILE = '/tmp/.zwrm-desktop-control'
+const OBSERVE_ACTIONS = new Set(['screenshot', 'zoom', 'cursor_position', 'wait'])
+
+// Honoured only within one lease window of now (90 s + slack), so a
+// malformed file can never lock the agent out for longer.
+const MAX_LEASE_MS = 95_000
+export function parseControl(text, now = Date.now()) {
+  const [holder, expiry] = String(text || '').trim().split(/\s+/)
+  const until = Number(expiry)
+  return holder === 'user' && Number.isFinite(until) && until > now && until <= now + MAX_LEASE_MS ? 'user' : 'agent'
+}
+
+export const USER_HAS_CONTROL =
+  'A person has taken control of this desktop and is using it right now. Do not send input. ' +
+  'You can still observe: call wait (e.g. 30 seconds) and take a screenshot to see what they did, ' +
+  'then continue once they hand control back.'
+
 export class Computer {
-  constructor({ display, run = defaultRun, screenshotDelayMs = 2000, sleep } = {}) {
+  constructor({ display, run = defaultRun, screenshotDelayMs = 2000, sleep, controlFile = CONTROL_FILE } = {}) {
     this.display = display
+    this.controlFile = controlFile
     this.run = run
     this.screenshotDelayMs = screenshotDelayMs
     this.sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)))
     // One action at a time: interleaved xdotool chains (a drag racing a
     // click) would produce input no model asked for.
     this.queue = Promise.resolve()
+  }
+
+  async controlHolder() {
+    try {
+      return parseControl(await readFile(this.controlFile, 'utf8'))
+    } catch {
+      return 'agent'
+    }
   }
 
   get width() { return this.display.width }
@@ -116,6 +147,9 @@ export class Computer {
   // { output?, error?, image? } with image as base64 PNG.
   call(action, input = {}) {
     const p = this.queue.then(async () => {
+      if (!OBSERVE_ACTIONS.has(action) && (await this.controlHolder()) === 'user') {
+        throw new ToolError(USER_HAS_CONTROL)
+      }
       await this.display.ensure()
       return this.#dispatch(action, input || {})
     })
