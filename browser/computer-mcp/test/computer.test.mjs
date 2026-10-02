@@ -206,4 +206,7 @@ test('parseControl matches agentd: only an unexpired user lease counts', () => {
   assert.equal(parseControl('user 1000', 1000), 'agent')
   assert.equal(parseControl('user', 1000), 'agent')
   assert.equal(parseControl('', 1000), 'agent')
+  assert.equal(parseControl('user Infinity', 1000), 'agent')
+  assert.equal(parseControl(`user ${1000 + 600_000} u1`, 1000), 'agent', 'never beyond one lease window')
+  assert.equal(parseControl(`user ${1000 + 90_000} u1`, 1000), 'user', 'the agentd format (with user id) reads as user')
 })

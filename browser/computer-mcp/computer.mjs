@@ -62,9 +62,13 @@ export class ToolError extends Error {}
 export const CONTROL_FILE = '/tmp/.zwrm-desktop-control'
 const OBSERVE_ACTIONS = new Set(['screenshot', 'zoom', 'cursor_position', 'wait'])
 
+// Honoured only within one lease window of now (90 s + slack), so a
+// malformed file can never lock the agent out for longer.
+const MAX_LEASE_MS = 95_000
 export function parseControl(text, now = Date.now()) {
   const [holder, expiry] = String(text || '').trim().split(/\s+/)
-  return holder === 'user' && Number(expiry) > now ? 'user' : 'agent'
+  const until = Number(expiry)
+  return holder === 'user' && Number.isFinite(until) && until > now && until <= now + MAX_LEASE_MS ? 'user' : 'agent'
 }
 
 export const USER_HAS_CONTROL =
