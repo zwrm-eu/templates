@@ -4,7 +4,9 @@ An agent that can use a real web browser and a desktop. Every session gets two
 MCP servers, on every harness (Claude, Codex, OpenCode, pi):
 
 - **`browser`** ([Playwright MCP](https://github.com/microsoft/playwright-mcp)):
-  a headless Chromium driven through the page structure. The tools show up as
+  a Chromium driven through the page structure. It runs on the virtual
+  desktop, so the live view shows what the agent is browsing and a person who
+  takes control drives the same browser. The tools show up as
   `mcp__browser__*`: navigate, click, type, fill forms, read the page's
   accessibility snapshot, take screenshots, manage tabs, and more. Fast and
   reliable; the first choice for web tasks.
