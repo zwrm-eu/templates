@@ -1,0 +1,18 @@
+#!/bin/sh
+# Launches the `browser` MCP server (Playwright MCP) on the persistent
+# profile, after clearing a stale Chromium profile lock.
+#
+# Chromium leaves Singleton{Lock,Socket,Cookie} in the profile while it runs.
+# The profile lives on the workspace volume, so a VM killed mid-browse (host
+# crash, forced stop, a cold-boot migration) leaves them behind. Playwright
+# MCP then treats the profile as in use whenever ANY live process has the pid
+# recorded in the lock, and every browser call fails until that pid frees up.
+# Nothing can be using the profile unless a Chrome process was started on it,
+# so with none running the lock is stale by definition.
+PROFILE=/home/agent/.zwrm/browser/profile
+
+if ! pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
+    rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
+fi
+
+exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" "$@"

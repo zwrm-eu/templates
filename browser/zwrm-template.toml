@@ -1,0 +1,8 @@
+[template]
+name = "Browser"
+description = "Agents that browse the web: headless Chromium driven through Playwright MCP."
+author = "zwrm-eu"
+icon = "globe"
+tags = ["browser", "playwright", "chromium", "automation", "computer-use", "scraping"]
+default_size = "performance-2x"
+min_size = "performance-2x"

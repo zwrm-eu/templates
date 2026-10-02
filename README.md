@@ -10,6 +10,7 @@ Official agent templates for [ZWRM](https://zwrm.eu). Each template is a special
 | [go](./go) | Go — gopls, delve, golangci-lint, air | `performance-2x` |
 | [python-api](./python-api) | Python API — FastAPI, SQLAlchemy, Redis | `performance-2x` |
 | [web](./web) | Web — Bun, pnpm, Playwright, Next.js/Vite | `performance-2x` |
+| [browser](./browser) | Browser use — headless Chromium via Playwright MCP, X display stack | `performance-2x` |
 
 ## Usage
 
