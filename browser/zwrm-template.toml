@@ -1,8 +1,8 @@
 [template]
 name = "Browser"
-description = "Agents that browse the web: headless Chromium driven through Playwright MCP."
+description = "Agents that browse the web and use a desktop: Chromium via Playwright MCP, plus computer use on a virtual display."
 author = "zwrm-eu"
 icon = "globe"
-tags = ["browser", "playwright", "chromium", "automation", "computer-use", "scraping"]
+tags = ["browser", "playwright", "chromium", "automation", "computer-use", "scraping", "desktop"]
 default_size = "performance-2x"
 min_size = "performance-2x"
