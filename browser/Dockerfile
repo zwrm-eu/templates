@@ -60,11 +60,11 @@ RUN echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' > /etc/profile.d/p
 # harness. --no-sandbox in the manifest: Chromium's own sandbox needs user
 # namespaces the guest kernel may not offer; the Firecracker VM is the
 # isolation boundary.
-COPY bin/zwrm-browser-mcp /usr/local/bin/
+COPY bin/zwrm-browser-mcp bin/zwrm-browser-proxy-config /usr/local/bin/
 COPY mcp.d/ /etc/zwrm/mcp.d/
 # The desktop this image offers the dashboard's live view (zwrm-eu/zwrm#1680).
 COPY desktop.json /etc/zwrm/desktop.json
-RUN chmod 755 /usr/local/bin/zwrm-browser-mcp /etc/zwrm /etc/zwrm/mcp.d \
+RUN chmod 755 /usr/local/bin/zwrm-browser-mcp /usr/local/bin/zwrm-browser-proxy-config /etc/zwrm /etc/zwrm/mcp.d \
     && chmod 644 /etc/zwrm/mcp.d/*.json /etc/zwrm/desktop.json
 
 USER agent
