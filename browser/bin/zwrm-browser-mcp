@@ -15,4 +15,15 @@ if ! pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
     rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 fi
 
-exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" "$@"
+# The browser runs HEADED on the virtual desktop, so the dashboard's live view
+# shows what the agent is browsing and a member who takes control drives the
+# same browser (zwrm-eu/zwrm#1680). Headed Chromium needs the display, so
+# start it first (a no-op when it already runs). If it cannot start, browse
+# headless rather than not at all.
+MODE=--headless
+if /usr/local/bin/node /opt/zwrm-computer-mcp/desktop.mjs start >/dev/null 2>&1; then
+    MODE=
+    export DISPLAY=:99
+fi
+
+exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE "$@"
