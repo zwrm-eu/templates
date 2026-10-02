@@ -24,6 +24,9 @@ MODE=--headless
 if /usr/local/bin/node /opt/zwrm-computer-mcp/desktop.mjs start >/dev/null 2>&1; then
     MODE=
     export DISPLAY=:99
+else
+    # stderr reaches the daemon/harness log: a black live view is diagnosable.
+    echo "zwrm-browser-mcp: the desktop did not start; browsing headless (not visible in the live view)" >&2
 fi
 
 exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE "$@"
