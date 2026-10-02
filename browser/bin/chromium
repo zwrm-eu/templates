@@ -1,0 +1,17 @@
+#!/bin/sh
+# Headed Chromium for the computer-use desktop (DISPLAY=:99 chromium URL &).
+# The same Chromium build Playwright MCP drives, on its own profile so the two
+# never contend for one profile lock. A stale lock (VM killed with the browser
+# open) is cleared when no Chrome runs on this profile; see zwrm-browser-mcp.
+PROFILE=/home/agent/.zwrm/browser/desktop-profile
+CHROME=$(ls -d /opt/ms-playwright/chromium-*/chrome-linux64/chrome 2>/dev/null | head -n1)
+[ -x "$CHROME" ] || { echo "chromium: no browser under /opt/ms-playwright" >&2; exit 1; }
+
+if ! pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
+    rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
+fi
+
+: "${DISPLAY:=:99}"
+export DISPLAY
+exec "$CHROME" --no-sandbox --no-first-run --no-default-browser-check --start-maximized \
+    --user-data-dir="$PROFILE" "$@"
