@@ -18,11 +18,15 @@ MCP servers, on every harness (Claude, Codex, OpenCode, pi):
 
 **Live view.** In the dashboard, the chat's side panel shows the desktop live
 (VNC, relayed by the platform; nothing is exposed from the VM). Anyone who can
-use the chat can watch, and can **take control**: while a person holds it, the
-agent's `computer` tools refuse input and tell the model to wait, and
-screenshots keep working so it can see what was done. Control returns to the
-agent when handed back, or on its own about 90 s after the person's browser
-goes away.
+use the chat can watch; one person at a time can **take control** and use the
+desktop with their own mouse and keyboard (the platform only passes input from
+the person holding control). While they hold it, the agent's `computer` tools
+refuse input and tell the model to wait, and screenshots keep working so it can
+see what was done. This pause is cooperative: it stops the agent's computer-use
+tools, not commands the agent runs in its shell. Control returns to the agent
+when handed back, or on its own about 90 s after the person's browser goes
+away. An org admin viewing a member's private chat can watch but not take
+control.
 
 ## What's Included
 
