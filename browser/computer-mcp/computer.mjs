@@ -81,12 +81,22 @@ export const USER_HAS_CONTROL =
   'A person has taken control of this desktop and is using it right now, so your input is paused. ' +
   'This is temporary: call wait (e.g. 30 seconds) to watch; its result says when control is handed ' +
   'back to you. Then carry on with your task.'
+export const USER_TOOK_CONTROL =
+  'A person has taken control of the desktop; you can only observe for now. Call wait to keep ' +
+  'watching; its result will say when control is handed back.'
 export const USER_STILL_HAS_CONTROL =
   'A person still has control of the desktop; you can only observe. Call wait again to keep watching; ' +
   'its result will say when control is handed back.'
 export const CONTROL_RETURNED =
-  'Control of the desktop has been handed back to you, so you can use it again. Take a screenshot ' +
-  'first: the person may have changed things.'
+  'Control of the desktop has been handed back to you, so you can use it again. Look at this ' +
+  'screenshot before acting: the person may have changed things.'
+export const CONTROL_RETURNED_AFTER_INPUT =
+  'Control of the desktop had been handed back to you, so this action ran, but on a screen the ' +
+  'person may have changed. Check this screenshot before continuing.'
+// wait always states the holder: a resumed session (a new server process)
+// has no memory of an earlier take-over, and silence after "its result will
+// say when control is handed back" would leave the model guessing.
+export const AGENT_HAS_CONTROL = 'You have control of the desktop.'
 
 export class Computer {
   constructor({ display, run = defaultRun, screenshotDelayMs = 2000, sleep, controlFile = CONTROL_FILE } = {}) {
@@ -169,7 +179,7 @@ export class Computer {
       const result = await this.#dispatch(action, input || {})
       // Read control again after an observation: a wait may span the
       // hand-back, and its result is what tells the model.
-      return this.#withControlNote(result, observe ? await this.controlHolder() : before)
+      return this.#withControlNote(result, observe ? await this.controlHolder() : before, action)
     })
     this.queue = p.catch(() => {})
     return p
@@ -177,14 +187,16 @@ export class Computer {
 
   // withControlNote prefixes a result with the take-over state the model
   // needs: still observing, or control just came back (once).
-  #withControlNote(result, holder) {
+  #withControlNote(result, holder, action) {
     let note = ''
     if (holder === 'user') {
+      note = this.sawUserControl ? USER_STILL_HAS_CONTROL : USER_TOOK_CONTROL
       this.sawUserControl = true
-      note = USER_STILL_HAS_CONTROL
     } else if (this.sawUserControl) {
       this.sawUserControl = false
-      note = CONTROL_RETURNED
+      note = OBSERVE_ACTIONS.has(action) ? CONTROL_RETURNED : CONTROL_RETURNED_AFTER_INPUT
+    } else if (action === 'wait') {
+      note = AGENT_HAS_CONTROL
     }
     return note ? { ...result, output: [note, result.output].filter(Boolean).join('\n') } : result
   }
