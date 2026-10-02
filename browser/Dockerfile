@@ -31,13 +31,16 @@ RUN npm install -g @playwright/mcp@0.0.83 \
 # Xvfb: the virtual display. openbox: a minimal window manager, so new windows
 # get focus and stacking. xdotool + scrot: input and screenshots. imagemagick:
 # zoom crops (and resizing, if the display is ever larger than 1280x800).
-# The `computer` MCP server starts the desktop on its first call.
+# x11vnc: the live view (loopback only; zwrm-agentd relays it, #1680).
+# The `computer` MCP server starts the desktop on its first call; the live
+# view can start it too (/etc/zwrm/desktop.json).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     openbox \
     xdotool \
     scrot \
     imagemagick \
+    x11vnc \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Dependencies first, so editing the server's source doesn't re-run npm ci.
@@ -59,8 +62,10 @@ RUN echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright' > /etc/profile.d/p
 # isolation boundary.
 COPY bin/zwrm-browser-mcp bin/chromium /usr/local/bin/
 COPY mcp.d/ /etc/zwrm/mcp.d/
+# The desktop this image offers the dashboard's live view (zwrm-eu/zwrm#1680).
+COPY desktop.json /etc/zwrm/desktop.json
 RUN chmod 755 /usr/local/bin/zwrm-browser-mcp /usr/local/bin/chromium /etc/zwrm /etc/zwrm/mcp.d \
-    && chmod 644 /etc/zwrm/mcp.d/*.json
+    && chmod 644 /etc/zwrm/mcp.d/*.json /etc/zwrm/desktop.json
 
 USER agent
 

@@ -13,6 +13,11 @@
 // never leaves one.) Suspend/restore needs none of this: the whole guest,
 // desktop included, resumes as it was.
 //
+// A VNC server (x11vnc) runs with the desktop, bound to loopback with no
+// password: zwrm-agentd relays it to the control plane over its token-gated
+// port for the dashboard's live view (zwrm-eu/zwrm#1680), so nothing else can
+// reach it.
+//
 // The desktop processes get a minimal environment, not the spawning
 // session's: they outlive that session, and its env carries session
 // credentials.
@@ -21,6 +26,7 @@ import { execFile, spawn } from 'node:child_process'
 import { readFile, rm } from 'node:fs/promises'
 
 const START_TIMEOUT_MS = 10_000
+export const VNC_PORT = 5900
 
 export function run(cmd, args, { env, timeout = 30_000 } = {}) {
   return new Promise((resolve) => {
@@ -66,6 +72,7 @@ export class Display {
   async #ensure() {
     if (await this.alive()) {
       await this.#ensureWindowManager()
+      await this.#ensureVNC()
       return
     }
     await this.#clearStaleLock()
@@ -77,6 +84,16 @@ export class Display {
       await new Promise((r) => setTimeout(r, 200))
     }
     await this.#ensureWindowManager()
+    await this.#ensureVNC()
+  }
+
+  // The live view's VNC server. -shared: several members may watch at once;
+  // -forever: survive a viewer disconnecting; -localhost: loopback only.
+  async #ensureVNC() {
+    if ((await run('pgrep', ['-x', 'x11vnc'], { timeout: 5_000 })).ok) return
+    this.log(`starting x11vnc on 127.0.0.1:${VNC_PORT}`)
+    this.#detach('x11vnc', ['-display', this.name, '-rfbport', String(VNC_PORT), '-localhost', '-nopw',
+      '-forever', '-shared', '-noxdamage', '-quiet'])
   }
 
   // A window manager gives new windows focus and stacking; without one,

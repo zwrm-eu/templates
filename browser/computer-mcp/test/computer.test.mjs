@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { Computer, ToolError } from '../computer.mjs'
+import { Computer, ToolError, USER_HAS_CONTROL, parseControl } from '../computer.mjs'
 
 // A fake display + runner: records every command, "captures" a tiny PNG.
 function harness({ width = 1280, height = 800, fail = {} } = {}) {
@@ -15,7 +15,7 @@ function harness({ width = 1280, height = 800, fail = {} } = {}) {
     if (cmd === 'xdotool' && args[0] === 'getmouselocation') return { ok: true, stdout: 'X=1919\nY=1079\nSCREEN=0\n', stderr: '' }
     return { ok: true, stdout: '', stderr: '' }
   }
-  const computer = new Computer({ display, run, screenshotDelayMs: 0, sleep: async () => {} })
+  const computer = new Computer({ display, run, screenshotDelayMs: 0, sleep: async () => {}, controlFile: '/nonexistent/control' })
   const xdo = () => calls.filter((c) => c[0] === 'xdotool').map((c) => c.slice(1))
   return { computer, calls, display, xdo }
 }
@@ -180,4 +180,30 @@ test('review: release() lets go of a held button on shutdown', async () => {
   await computer.release()
   assert.deepEqual(xdo().at(-1), ['mouseup', '1'], 'nothing more to release')
   assert.equal(xdo().filter((a) => a[0] === 'mouseup').length, 1)
+})
+
+test('take-over: while a member holds a live lease, input is refused but observing works', async () => {
+  const { mkdtemp, writeFile: wf } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const dir = await mkdtemp(`${tmpdir()}/ctl-`)
+  const controlFile = `${dir}/control`
+  const { computer: base, xdo } = harness()
+  const computer = new Computer({ display: base.display, run: base.run, screenshotDelayMs: 0, sleep: async () => {}, controlFile })
+  await wf(controlFile, `user ${Date.now() + 60_000}\n`)
+  await assert.rejects(computer.call('left_click', { coordinate: [1, 1] }), (e) => e.message === USER_HAS_CONTROL)
+  await assert.rejects(computer.call('type', { text: 'x' }), /taken control/)
+  assert.ok((await computer.call('screenshot')).image, 'screenshots still work')
+  assert.ok((await computer.call('wait', { duration: 0 })).image)
+  await wf(controlFile, `user ${Date.now() - 1}\n`) // lease lapsed
+  await computer.call('left_click', { coordinate: [1, 1] })
+  await wf(controlFile, 'agent\n')
+  await computer.call('key', { text: 'a' })
+  assert.deepEqual(xdo().at(-1), ['key', '--', 'a'])
+})
+
+test('parseControl matches agentd: only an unexpired user lease counts', () => {
+  assert.equal(parseControl('user 2000', 1000), 'user')
+  assert.equal(parseControl('user 1000', 1000), 'agent')
+  assert.equal(parseControl('user', 1000), 'agent')
+  assert.equal(parseControl('', 1000), 'agent')
 })

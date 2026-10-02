@@ -16,6 +16,14 @@ MCP servers, on every harness (Claude, Codex, OpenCode, pi):
   the first call; launch apps on it from the shell with `DISPLAY=:99`, e.g.
   `DISPLAY=:99 chromium https://example.com &`.
 
+**Live view.** In the dashboard, the chat's side panel shows the desktop live
+(VNC, relayed by the platform; nothing is exposed from the VM). Anyone who can
+use the chat can watch, and can **take control**: while a person holds it, the
+agent's `computer` tools refuse input and tell the model to wait, and
+screenshots keep working so it can see what was done. Control returns to the
+agent when handed back, or on its own about 90 s after the person's browser
+goes away.
+
 ## What's Included
 
 Everything from [agent-base](https://github.com/zwrm-eu/zwrm/pkgs/container/agent-base) plus:
