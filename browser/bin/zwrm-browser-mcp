@@ -29,4 +29,14 @@ else
     echo "zwrm-browser-mcp: the desktop did not start; browsing headless (not visible in the live view)" >&2
 fi
 
-exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE "$@"
+# Optional egress proxy (agent secret BROWSER_PROXY): sites that block
+# datacenter addresses see the proxy's address instead. Only the browser uses
+# it, not the agent's shell. A value that cannot be used stops here, loudly,
+# rather than browsing without the proxy that was asked for.
+PROXY=
+if [ -n "$BROWSER_PROXY" ]; then
+    CONFIG=$(/usr/local/bin/zwrm-browser-proxy-config) || exit 1
+    PROXY="--config $CONFIG"
+fi
+
+exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE $PROXY "$@"
