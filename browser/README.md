@@ -62,21 +62,29 @@ Playwright MCP) can reuse the installed Chromium: `PLAYWRIGHT_BROWSERS_PATH`
 points at it in SSH and terminal shells. Other Playwright versions expect a
 different browser revision and need their own `playwright install`.
 
-## Route the browser through a proxy
+## Route sites through a proxy
 
 Some sites block datacenter IP addresses (Akamai- or Cloudflare-protected
-sites often do). Set an agent secret `BROWSER_PROXY` to send the browser's
-traffic through a proxy, for example a static ISP proxy:
+sites often do), while others (Google) misbehave behind a proxy. Give the
+agent a proxy with the agent secret `BROWSER_PROXY`, and it routes **per
+site**, on its own:
 
 ```bash
 printf %s "http://user:pass@proxy.example.com:8080" | zwrm agent secrets set BROWSER_PROXY --stdin --instance my-agent
 ```
 
-- Accepted: `http://`, `https://` and `socks5://` (SOCKS5 without
-  credentials only; Chromium can't authenticate to SOCKS5).
+- Every site goes direct by default. The agent's `network` tools
+  (`proxy_status`, `use_proxy`, `use_direct`) switch a site when it gets
+  blocked; the choice takes effect on the next page load and is remembered in
+  the workspace (`~/.zwrm/browser/routes.json`). A choice covers the domain
+  and its subdomains; the most specific rule wins.
+- Sites known to refuse datacenter networks go through the proxy from the
+  start (`/etc/zwrm/browser/proxy-sites.json`: meinestadt.de, indeed.com).
+- How it works: the browser always uses a small router on `127.0.0.1:18080`
+  inside the VM, which holds the proxy credentials and decides per connection.
+- Accepted: `http://` and `https://` proxies, with or without credentials.
 - It applies from the workspace's next boot (secrets are injected at boot).
-- Only the browser uses it, not the agent's shell (`curl` and scripts keep the
-  VM's own address).
+- Only the browser uses it, not the agent's shell.
 - A value that can't be used stops the `browser` tools with an error in the
   agent's log, rather than browsing without the proxy.
 
