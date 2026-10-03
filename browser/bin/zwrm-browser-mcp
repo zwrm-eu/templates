@@ -29,14 +29,20 @@ else
     echo "zwrm-browser-mcp: the desktop did not start; browsing headless (not visible in the live view)" >&2
 fi
 
-# Optional egress proxy (agent secret BROWSER_PROXY): sites that block
-# datacenter addresses see the proxy's address instead. Only the browser uses
-# it, not the agent's shell. A value that cannot be used stops here, loudly,
-# rather than browsing without the proxy that was asked for.
+# Optional proxy (agent secret BROWSER_PROXY), per site: the browser always
+# talks to a local router (site-router.mjs), which sends the sites the agent
+# chose (the `network` tools, remembered in the workspace) through the proxy
+# and everything else direct. Only the browser uses it, not the agent's shell.
+# A value that cannot be used stops here, loudly, rather than browsing without
+# the proxy that was asked for.
 PROXY=
 if [ -n "$BROWSER_PROXY" ]; then
-    CONFIG=$(/usr/local/bin/zwrm-browser-proxy-config) || exit 1
-    PROXY="--config $CONFIG"
+    /usr/local/bin/node /opt/zwrm-computer-mcp/site-router.mjs --check || exit 1
+    /usr/local/bin/node /opt/zwrm-computer-mcp/site-router.mjs --ensure || {
+        echo "zwrm-browser-mcp: the site router did not start" >&2
+        exit 1
+    }
+    PROXY="--proxy-server http://127.0.0.1:18080 --proxy-bypass localhost,127.0.0.1"
 fi
 
 exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE $PROXY "$@"
