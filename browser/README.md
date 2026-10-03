@@ -81,12 +81,20 @@ printf %s "http://user:pass@proxy.example.com:8080" | zwrm agent secrets set BRO
 - Sites known to refuse datacenter networks go through the proxy from the
   start (`/etc/zwrm/browser/proxy-sites.json`: meinestadt.de, indeed.com).
 - How it works: the browser always uses a small router on `127.0.0.1:18080`
-  inside the VM, which holds the proxy credentials and decides per connection.
-- Accepted: `http://` and `https://` proxies, with or without credentials.
-- It applies from the workspace's next boot (secrets are injected at boot).
-- Only the browser uses it, not the agent's shell.
-- A value that can't be used stops the `browser` tools with an error in the
-  agent's log, rather than browsing without the proxy.
+  inside the VM, which picks the route per connection. The proxy itself is
+  used by the host's egress gateway (at the VM's default gateway, port 1339):
+  the credentials stay on the host and never enter the VM.
+- If the organization sets a network policy (`zwrm org egress`,
+  `zwrm agent egress`), the host enforces it on both routes; a blocked site
+  fails with "Blocked by your organization's network policy", and
+  `proxy_status` lists recent blocks so the agent tells the person instead of
+  retrying.
+- Accepted: `http://` and `https://` proxies, with or without credentials. A
+  value that isn't a proxy URL is ignored, with a warning in the control
+  plane's log.
+- It applies from the workspace's next boot or wake.
+- Only the browser routes per site, not the agent's shell.
+- Needs zwrm v0.31.0+ on every host (the egress gateway).
 
 ## Notes
 
