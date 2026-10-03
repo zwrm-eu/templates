@@ -66,8 +66,11 @@ export async function gatewayStatus(base) {
     if (!r.ok) return { available: false, proxy: false, restricted: false }
     const s = await r.json()
     return { available: true, proxy: Boolean(s.proxy), restricted: Boolean(s.restricted) }
-  } catch {
-    return { available: false, proxy: false, restricted: false }
+  } catch (err) {
+    // Refused: no gateway on this host. Anything else (a slow answer, a
+    // reset) is transient: the caller keeps what it knew.
+    if (err?.cause?.code === 'ECONNREFUSED') return { available: false, proxy: false, restricted: false }
+    return { available: false, proxy: false, restricted: false, transient: true }
   }
 }
 
@@ -98,6 +101,7 @@ export async function ensureRouter() {
 // sites routed through the proxy, and recent policy blocks.
 export async function routerStatus(port = ROUTER_PORT) {
   const r = await fetch(`http://127.0.0.1:${port}/__zwrm/status`, { signal: AbortSignal.timeout(3000) })
+  if (!r.ok) throw new Error(`site router status: HTTP ${r.status}`)
   return r.json()
 }
 
@@ -131,6 +135,7 @@ export async function runRouter({
   let routes = await loadRoutes(routesOpts)
   let rules = ruleMap(routes)
   let gateway = await gatewayStatus(gatewayBase)
+  let gatewayMisses = 0
   const tunnels = new Set() // {host, via, sockets}
   const blocks = [] // recent policy refusals, newest first
 
@@ -158,7 +163,15 @@ export async function runRouter({
     routes = await loadRoutes({ ...routesOpts, log })
     rules = ruleMap(routes)
     const before = useGateway()
-    gateway = await gatewayStatus(gatewayBase)
+    const next = await gatewayStatus(gatewayBase)
+    // One slow or failed poll must not flip routing (and close every
+    // tunnel): keep the last known status until three in a row fail.
+    if (next.transient && gateway.available && ++gatewayMisses < 3) {
+      // keep the last known status
+    } else {
+      gatewayMisses = 0
+      gateway = next
+    }
     const gatewayChanged = before !== useGateway()
     for (const t of tunnels) {
       if (gatewayChanged || routeOf(t.host) !== t.via) {
@@ -175,38 +188,60 @@ export async function runRouter({
   // answers with anything but 200.
   const dialGateway = (target, via, onReady, onRefused, onFail) => {
     const sock = net.connect(Number(gwURL.port), gwURL.hostname)
+    // Exactly one of onReady/onRefused/onFail runs, whatever the socket does.
+    let settled = false
+    const settle = (fn, ...args) => {
+      if (settled) return
+      settled = true
+      sock.setTimeout(0)
+      fn(...args)
+    }
+    const failed = (why) => settle(() => { sock.destroy(); onFail(why) })
     sock.once('connect', () => {
       sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nX-Zwrm-Route: ${via}\r\n\r\n`)
     })
+    // A gateway that never answers, or closes before its headers, must not
+    // leave the browser's CONNECT pending.
+    sock.setTimeout(15000, () => failed('gateway timed out'))
+    sock.once('error', (err) => failed(err.message))
+    sock.once('close', () => failed('gateway closed the connection'))
     let buf = Buffer.alloc(0)
     const onData = (chunk) => {
       buf = Buffer.concat([buf, chunk])
       const end = buf.indexOf('\r\n\r\n')
       if (end < 0) {
-        if (buf.length > 16384) { sock.destroy(); onFail('bad gateway response') }
+        if (buf.length > 16384) failed('bad gateway response')
         return
       }
       sock.off('data', onData)
       const head = buf.subarray(0, end).toString()
-      const status = head.slice(0, head.indexOf('\r\n') >= 0 ? head.indexOf('\r\n') : head.length)
-      if (/^HTTP\/1\.[01] 200/.test(status)) { onReady(sock, buf.subarray(end + 4)); return }
-      const blocked = /\r\nx-zwrm-egress:\s*blocked/i.test(head)
-      // The refusal's reason is the body: read what arrives with it.
-      let body = buf.subarray(end + 4).toString()
-      let finished = false
-      const finish = () => {
-        if (finished) return
-        finished = true
-        sock.destroy()
-        onRefused(status, blocked, body.trim())
+      const nl = head.indexOf('\r\n')
+      const status = nl >= 0 ? head.slice(0, nl) : head
+      if (/^HTTP\/1\.[01] 200/.test(status)) {
+        settle(() => {
+          sock.removeAllListeners('error')
+          sock.removeAllListeners('close')
+          onReady(sock, buf.subarray(end + 4))
+        })
+        return
       }
-      sock.on('data', (d) => { body += d; if (body.length > 4096) finish() })
-      sock.once('end', finish)
-      sock.once('error', finish)
-      setTimeout(finish, 1000).unref()
+      const blocked = /\r\nx-zwrm-egress:\s*blocked/i.test(head)
+      // The refusal's reason is the body (Content-Length bounded: the
+      // gateway keeps the connection open after it).
+      const lenMatch = head.match(/\r\ncontent-length:\s*(\d+)/i)
+      const want = lenMatch ? Math.min(Number(lenMatch[1]), 4096) : 4096
+      let body = buf.subarray(end + 4)
+      const refuse = () => settle(() => { sock.destroy(); onRefused(status, blocked, body.subarray(0, want).toString().trim()) })
+      if (body.length >= want) { refuse(); return }
+      sock.removeAllListeners('close')
+      sock.removeAllListeners('error')
+      sock.on('data', (d) => { body = Buffer.concat([body, d]); if (body.length >= want) refuse() })
+      sock.once('end', refuse)
+      sock.once('close', refuse)
+      sock.once('error', refuse)
+      setTimeout(refuse, 1000).unref()
     }
     sock.on('data', onData)
-    sock.once('error', (err) => onFail(err.message))
     return sock
   }
 
@@ -265,6 +300,8 @@ export async function runRouter({
     client.on('close', done)
     let open = false
     const established = (up, early) => {
+      // The browser gave up while we dialed: nothing to tunnel to.
+      if (client.destroyed) { up.destroy(); return }
       open = true
       // From here on, upstream errors close the tunnel; they must not write
       // a 502 into an established stream.

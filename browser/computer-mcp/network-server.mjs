@@ -33,8 +33,16 @@ async function status() {
 
 // blockedReason returns the policy's reason for refusing domain (or a
 // subdomain of it), from the router's recent blocks.
+// Blocks older than this are not trusted: an admin may have lifted them.
+const BLOCK_TTL_MS = 10 * 60 * 1000
+
 function blockedReason(st, domain) {
-  const b = st?.blocked?.find((x) => x.host === domain || x.host.endsWith(`.${domain}`) || domain.endsWith(`.${x.host}`))
+  const fresh = (x) => Date.now() - Date.parse(x.at) < BLOCK_TTL_MS
+  // The blocked host itself, or a parent of it (a subdomain of a blocked
+  // host is blocked too); never a child: one blocked subdomain says nothing
+  // about the rest of the site.
+  const b = st?.blocked?.find((x) => fresh(x) &&
+    (x.host === domain || x.host === `www.${domain}` || domain.endsWith(`.${x.host}`)))
   return b?.reason
 }
 
@@ -74,7 +82,7 @@ server.registerTool('proxy_status', {
   }
   if (st.blocked?.length) {
     lines.push('Recently blocked by the organization\'s network policy (no route reaches these; tell the person):')
-    for (const b of st.blocked.slice(0, 10)) lines.push(`- ${b.host}: ${b.reason}`)
+    for (const b of st.blocked.slice(0, 10)) lines.push(`- ${b.host}: ${b.reason} (${b.at})`)
   }
   return text(lines.join('\n'))
 })
@@ -95,9 +103,13 @@ server.registerTool('use_proxy', {
     return text(String(err.message || err), true)
   }
   const st = await status()
+  if (!st) {
+    return text('The browser\'s site router is not running, so routes cannot change. Close the browser ' +
+      '(browser_close) and open the page again; if that does not help, tell the person.', true)
+  }
   const reason = blockedReason(st, d)
   if (reason) return text(`${d} ${POLICY_BLOCKED} (${reason})`, true)
-  if (!st?.gateway?.proxy) return text(NOT_CONFIGURED, true)
+  if (!st.gateway?.proxy) return text(NOT_CONFIGURED, true)
   try {
     const r = await setRoute(d, 'proxy')
     await notifyRouter()
