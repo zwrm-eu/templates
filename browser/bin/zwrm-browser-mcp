@@ -29,20 +29,19 @@ else
     echo "zwrm-browser-mcp: the desktop did not start; browsing headless (not visible in the live view)" >&2
 fi
 
-# Optional proxy (agent secret BROWSER_PROXY), per site: the browser always
-# talks to a local router (site-router.mjs), which sends the sites the agent
-# chose (the `network` tools, remembered in the workspace) through the proxy
-# and everything else direct. Only the browser uses it, not the agent's shell.
-# A value that cannot be used stops here, loudly, rather than browsing without
-# the proxy that was asked for.
+# The browser always talks to a local site router (site-router.mjs), which
+# sends each site direct or through the agent's proxy (the `network` tools
+# choose, remembered in the workspace). Both routes run through the host's
+# egress gateway when it offers a proxy (agent secret BROWSER_PROXY, whose
+# credentials stay on the host) or enforces a network policy
+# (zwrm-eu/zwrm#1692). Only the browser uses the router, not the agent's
+# shell. If the router cannot start, browse without it: the host still
+# enforces the policy, only the per-site proxy routing is lost.
 PROXY=
-if [ -n "$BROWSER_PROXY" ]; then
-    /usr/local/bin/node /opt/zwrm-computer-mcp/site-router.mjs --check || exit 1
-    /usr/local/bin/node /opt/zwrm-computer-mcp/site-router.mjs --ensure || {
-        echo "zwrm-browser-mcp: the site router did not start" >&2
-        exit 1
-    }
+if /usr/local/bin/node /opt/zwrm-computer-mcp/site-router.mjs --ensure; then
     PROXY="--proxy-server http://127.0.0.1:18080 --proxy-bypass localhost,127.0.0.1"
+else
+    echo "zwrm-browser-mcp: the site router did not start; browsing without per-site proxy routing" >&2
 fi
 
 exec /usr/local/bin/playwright-mcp --user-data-dir "$PROFILE" $MODE $PROXY "$@"
