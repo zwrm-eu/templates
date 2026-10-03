@@ -1,52 +1,73 @@
 #!/usr/bin/env node
 // Per-site router for the agent's browser. Chromium always uses this local
 // proxy (127.0.0.1:ROUTER_PORT); for each connection it decides, by host,
-// whether to go direct (the VM's own address) or through the agent's proxy
-// (BROWSER_PROXY), using the routes in routes.mjs. It also carries the
-// proxy's credentials, which Chromium's proxy setting cannot.
+// whether the site goes direct or through the agent's proxy, using the
+// routes in routes.mjs.
 //
-//   site-router.mjs --check    validate BROWSER_PROXY, exit non-zero with a message
+// Both routes run through the host's egress gateway (zwrm-eu/zwrm#1692),
+// at the VM's default gateway, whenever the gateway offers a proxy or the
+// agent runs under a network policy: the gateway holds the proxy's
+// credentials (they never enter the VM) and enforces the organization's
+// policy on either route. A site the policy blocks is refused with a reason,
+// which the router keeps for the `network` tools to report. With neither a
+// proxy nor a policy (or on a host without a gateway), the router connects
+// directly.
+//
 //   site-router.mjs --ensure   start the router detached unless it already runs
 //   site-router.mjs            run in the foreground
 //
-// Routes are re-read on POST /__zwrm/reload (the `network` tools call it after
-// a change) and every few seconds. A reload closes open tunnels whose route
-// changed, so the browser's next request reconnects the new way instead of
-// reusing a pooled connection.
+// Routes and the gateway's status are re-read on POST /__zwrm/reload (the
+// `network` tools call it after a change) and every few seconds. A reload
+// closes open tunnels whose route changed, so the browser's next request
+// reconnects the new way instead of reusing a pooled connection.
 
 import { spawn } from 'node:child_process'
 import http from 'node:http'
-import https from 'node:https'
 import net from 'node:net'
-import tls from 'node:tls'
-import { openSync } from 'node:fs'
+import { openSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { effectiveProxySites, loadRoutes, routeFor, ruleMap } from './routes.mjs'
 
 export const ROUTER_PORT = 18080
+// The host's egress gateway: an HTTP proxy at the VM's default gateway.
+export const GATEWAY_PORT = 1339
 const RELOAD_EVERY_MS = 5000
 // GET /__zwrm/health answers this, so --ensure can tell the router from any
 // other program that happens to hold the port.
 const HEALTH_MARKER = 'zwrm-site-router'
+const MAX_BLOCKS = 20
 
-// parseUpstream validates BROWSER_PROXY: http(s)://[user:pass@]host:port.
-export function parseUpstream(value) {
-  let url
-  try {
-    url = new URL(value || '')
-  } catch {
-    throw new Error('BROWSER_PROXY is not a URL (want http://[user:pass@]host:port)')
+// defaultGateway reads the IPv4 default gateway from /proc/net/route text.
+export function defaultGateway(text) {
+  for (const line of String(text).split('\n').slice(1)) {
+    const f = line.trim().split(/\s+/)
+    if (f[1] === '00000000' && /^[0-9A-Fa-f]{8}$/.test(f[2] || '')) {
+      const n = parseInt(f[2], 16)
+      return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255].join('.')
+    }
   }
-  const scheme = url.protocol.replace(/:$/, '')
-  if (scheme !== 'http' && scheme !== 'https') throw new Error(`BROWSER_PROXY has unsupported scheme "${scheme}" (http or https)`)
-  if (!url.hostname || !url.port) throw new Error('BROWSER_PROXY needs a host and a port')
-  const user = decodeURIComponent(url.username)
-  const pass = decodeURIComponent(url.password)
-  return {
-    tls: scheme === 'https',
-    host: url.hostname,
-    port: Number(url.port),
-    auth: user || pass ? `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}` : null,
+  return null
+}
+
+function readGatewayAddr() {
+  try {
+    return defaultGateway(readFileSync('/proc/net/route', 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+// gatewayStatus asks the host gateway what it offers this VM:
+// { available, proxy, restricted }.
+export async function gatewayStatus(base) {
+  if (!base) return { available: false, proxy: false, restricted: false }
+  try {
+    const r = await fetch(`${base}/__zwrm/egress`, { signal: AbortSignal.timeout(1500) })
+    if (!r.ok) return { available: false, proxy: false, restricted: false }
+    const s = await r.json()
+    return { available: true, proxy: Boolean(s.proxy), restricted: Boolean(s.restricted) }
+  } catch {
+    return { available: false, proxy: false, restricted: false }
   }
 }
 
@@ -73,20 +94,18 @@ export async function ensureRouter() {
   return state
 }
 
+// routerStatus is the running router's view: the gateway's offer, the
+// sites routed through the proxy, and recent policy blocks.
+export async function routerStatus(port = ROUTER_PORT) {
+  const r = await fetch(`http://127.0.0.1:${port}/__zwrm/status`, { signal: AbortSignal.timeout(3000) })
+  return r.json()
+}
+
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
 const mode = isMain ? process.argv[2] : 'imported'
-if (mode === '--check') {
-  try {
-    parseUpstream(process.env.BROWSER_PROXY)
-  } catch (err) {
-    process.stderr.write(`zwrm-browser-mcp: ${err.message}\n`)
-    process.exit(1)
-  }
-  process.exit(0)
-}
 if (mode === '--ensure') {
   const state = await ensureRouter()
-  if (state === 'foreign') process.stderr.write(`zwrm-browser-mcp: another program holds 127.0.0.1:${ROUTER_PORT}; the browser's proxy router cannot start\n`)
+  if (state === 'foreign') process.stderr.write(`zwrm-browser-mcp: another program holds 127.0.0.1:${ROUTER_PORT}; the browser's site router cannot start\n`)
   process.exit(state === 'up' ? 0 : 1)
 }
 if (mode === undefined) {
@@ -102,11 +121,34 @@ if (mode === undefined) {
   }
 }
 
-export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.env.BROWSER_PROXY, routesOpts, log = (m) => process.stderr.write(`[site-router] ${m}\n`) } = {}) {
-  const upstream = parseUpstream(upstreamValue)
+export async function runRouter({
+  port = ROUTER_PORT,
+  gatewayBase = (() => { const a = readGatewayAddr(); return a ? `http://${a}:${GATEWAY_PORT}` : null })(),
+  routesOpts,
+  log = (m) => process.stderr.write(`[site-router] ${m}\n`),
+} = {}) {
+  const gwURL = gatewayBase ? new URL(gatewayBase) : null
   let routes = await loadRoutes(routesOpts)
   let rules = ruleMap(routes)
+  let gateway = await gatewayStatus(gatewayBase)
   const tunnels = new Set() // {host, via, sockets}
+  const blocks = [] // recent policy refusals, newest first
+
+  const noteBlock = (host, reason) => {
+    const i = blocks.findIndex((b) => b.host === host)
+    if (i >= 0) blocks.splice(i, 1)
+    blocks.unshift({ host, reason, at: new Date().toISOString() })
+    blocks.length = Math.min(blocks.length, MAX_BLOCKS)
+  }
+
+  // useGateway: whether connections go through the host gateway at all.
+  const useGateway = () => gateway.available && (gateway.proxy || gateway.restricted)
+  // routeOf: the route a host takes now. A site routed through the proxy
+  // goes direct while no proxy is offered.
+  const routeOf = (host) => {
+    const via = routeFor(host, rules)
+    return via === 'proxy' && !gateway.proxy ? 'direct' : via
+  }
 
   // Reloads apply in the order they started, so a slow stale read can never
   // overwrite a newer one.
@@ -115,8 +157,11 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
   const applyRoutes = async () => {
     routes = await loadRoutes({ ...routesOpts, log })
     rules = ruleMap(routes)
+    const before = useGateway()
+    gateway = await gatewayStatus(gatewayBase)
+    const gatewayChanged = before !== useGateway()
     for (const t of tunnels) {
-      if (routeFor(t.host, rules) !== t.via) {
+      if (gatewayChanged || routeOf(t.host) !== t.via) {
         for (const s of t.sockets) s.destroy()
         tunnels.delete(t)
       }
@@ -125,26 +170,40 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
   const timer = setInterval(() => { reload().catch(() => {}) }, RELOAD_EVERY_MS)
   timer.unref()
 
-  // dialUpstream opens a CONNECT tunnel to target through the agent's proxy.
-  const dialUpstream = (target, onReady, onFail) => {
-    const sock = upstream.tls
-      ? tls.connect({ host: upstream.host, port: upstream.port, servername: upstream.host })
-      : net.connect(upstream.port, upstream.host)
-    sock.once(upstream.tls ? 'secureConnect' : 'connect', () => {
-      sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${upstream.auth ? `Proxy-Authorization: ${upstream.auth}\r\n` : ''}\r\n`)
+  // dialGateway opens a CONNECT tunnel to target through the host gateway,
+  // on the given route. onRefused(status, blocked, reason) when the gateway
+  // answers with anything but 200.
+  const dialGateway = (target, via, onReady, onRefused, onFail) => {
+    const sock = net.connect(Number(gwURL.port), gwURL.hostname)
+    sock.once('connect', () => {
+      sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nX-Zwrm-Route: ${via}\r\n\r\n`)
     })
     let buf = Buffer.alloc(0)
     const onData = (chunk) => {
       buf = Buffer.concat([buf, chunk])
       const end = buf.indexOf('\r\n\r\n')
       if (end < 0) {
-        if (buf.length > 16384) { sock.destroy(); onFail('bad proxy response') }
+        if (buf.length > 16384) { sock.destroy(); onFail('bad gateway response') }
         return
       }
       sock.off('data', onData)
-      const status = buf.subarray(0, buf.indexOf('\r\n')).toString()
-      if (!/^HTTP\/1\.[01] 200/.test(status)) { sock.destroy(); onFail(status); return }
-      onReady(sock, buf.subarray(end + 4))
+      const head = buf.subarray(0, end).toString()
+      const status = head.slice(0, head.indexOf('\r\n') >= 0 ? head.indexOf('\r\n') : head.length)
+      if (/^HTTP\/1\.[01] 200/.test(status)) { onReady(sock, buf.subarray(end + 4)); return }
+      const blocked = /\r\nx-zwrm-egress:\s*blocked/i.test(head)
+      // The refusal's reason is the body: read what arrives with it.
+      let body = buf.subarray(end + 4).toString()
+      let finished = false
+      const finish = () => {
+        if (finished) return
+        finished = true
+        sock.destroy()
+        onRefused(status, blocked, body.trim())
+      }
+      sock.on('data', (d) => { body += d; if (body.length > 4096) finish() })
+      sock.once('end', finish)
+      sock.once('error', finish)
+      setTimeout(finish, 1000).unref()
     }
     sock.on('data', onData)
     sock.once('error', (err) => onFail(err.message))
@@ -156,21 +215,29 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
       res.end(HEALTH_MARKER)
       return
     }
+    if (req.url === '/__zwrm/status') {
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ gateway, sites: effectiveProxySites(routes), blocked: blocks }))
+      return
+    }
     if (req.url.startsWith('/__zwrm/reload')) {
-      reload().then(() => res.end(JSON.stringify({ sites: effectiveProxySites(routes) })), (err) => { res.writeHead(500); res.end(String(err)) })
+      reload().then(() => res.end(JSON.stringify({ sites: effectiveProxySites(routes), gateway })), (err) => { res.writeHead(500); res.end(String(err)) })
       return
     }
     // Plain http:// requests arrive in absolute form.
     let target
     try { target = new URL(req.url) } catch { res.writeHead(400); res.end(); return }
-    const via = routeFor(target.hostname, rules)
     const headers = { ...req.headers }
     delete headers['proxy-connection']
-    const opts = via === 'proxy'
-      ? { host: upstream.host, port: upstream.port, path: req.url, method: req.method, headers: upstream.auth ? { ...headers, 'proxy-authorization': upstream.auth } : headers }
-      : { host: target.hostname, port: target.port || 80, path: `${target.pathname}${target.search}`, method: req.method, headers }
-    const client = via === 'proxy' && upstream.tls ? https : http
-    const up = client.request(opts, (r) => {
+    let opts
+    if (useGateway()) {
+      // Absolute form to the gateway, which applies the policy per request.
+      opts = { host: gwURL.hostname, port: Number(gwURL.port), path: req.url, method: req.method, headers: { ...headers, 'x-zwrm-route': routeOf(target.hostname) } }
+    } else {
+      opts = { host: target.hostname, port: target.port || 80, path: `${target.pathname}${target.search}`, method: req.method, headers }
+    }
+    const up = http.request(opts, (r) => {
+      if (r.headers['x-zwrm-egress'] === 'blocked') noteBlock(target.hostname, `blocked by the organization's network policy (HTTP ${r.statusCode})`)
       res.writeHead(r.statusCode, r.headers)
       r.pipe(res)
       // A response cut off mid-body must end the browser's request too.
@@ -183,13 +250,14 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
 
   server.on('connect', (req, client, head) => {
     const target = req.url
-    const host = target.replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
+    const host = target.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()
     const port = Number(target.match(/:(\d+)$/)?.[1] || 443)
     if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
       client.end('HTTP/1.1 400 Bad Request\r\n\r\n')
       return
     }
-    const via = routeFor(host, rules)
+    const viaGateway = useGateway()
+    const via = routeOf(host)
     const tunnel = { host, via, sockets: [client] }
     tunnels.add(tunnel)
     const done = () => { tunnels.delete(tunnel); for (const s of tunnel.sockets) s.destroy() }
@@ -210,15 +278,32 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
       up.on('error', done)
       up.on('close', done)
     }
+    // answer ends the browser's CONNECT with an error status, letting it
+    // flush rather than destroying the socket under it.
+    const answer = (msg) => {
+      tunnels.delete(tunnel)
+      for (const s of tunnel.sockets) if (s !== client) s.destroy()
+      client.end(msg)
+    }
     const fail = (why) => {
       if (open) return done()
       log(`${via} ${target}: ${why}`)
-      client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')
-      done()
+      answer('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+    }
+    const refused = (status, blocked, reason) => {
+      if (open) return done()
+      if (blocked) {
+        noteBlock(host, reason || 'blocked by the organization\'s network policy')
+        log(`blocked ${target}: ${reason}`)
+        answer('HTTP/1.1 403 Forbidden\r\nX-Zwrm-Egress: blocked\r\n\r\n')
+      } else {
+        log(`${via} ${target}: gateway answered ${status}`)
+        answer('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+      }
     }
     try {
-      if (via === 'proxy') {
-        dialUpstream(target, established, fail)
+      if (viaGateway) {
+        dialGateway(target, via, established, refused, fail)
       } else {
         const up = net.connect(port, host, () => established(up))
         up.once('error', (err) => fail(err.message))
@@ -232,6 +317,12 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
     server.once('error', reject)
     server.listen(port, '127.0.0.1', resolve)
   })
-  log(`listening on 127.0.0.1:${port}; proxy sites: ${effectiveProxySites(routes).join(', ') || '(none)'}`)
-  return { server, reload, close: () => { clearInterval(timer); for (const t of tunnels) for (const s of t.sockets) s.destroy(); server.close() }, sites: () => effectiveProxySites(routes) }
+  log(`listening on 127.0.0.1:${port}; gateway ${gatewayBase || '(none)'} ${JSON.stringify(gateway)}; proxy sites: ${effectiveProxySites(routes).join(', ') || '(none)'}`)
+  return {
+    server,
+    reload,
+    close: () => { clearInterval(timer); for (const t of tunnels) for (const s of t.sockets) s.destroy(); server.close() },
+    sites: () => effectiveProxySites(routes),
+    status: () => ({ gateway, sites: effectiveProxySites(routes), blocked: blocks }),
+  }
 }
