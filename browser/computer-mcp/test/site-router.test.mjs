@@ -151,3 +151,30 @@ test('review: a bad CONNECT port is a 400, not a crash; health answers; a mid-st
     router.close(); site.close()
   }
 })
+
+test('review: a gateway that closes before answering fails the CONNECT; a refusal is answered at once', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'router-'))
+  const routesOpts = { defaultsFile: path.join(dir, 'd.json'), routesFile: path.join(dir, 'r.json') }
+  const gw = http.createServer((req, res) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ proxy: false, restricted: true })) })
+  gw.on('connect', (req, sock) => {
+    if (req.url.startsWith('vanish.test')) { sock.end(); return }
+    // Like Go's http.Error: Content-Length, connection kept open.
+    const body = 'Blocked by your organization\'s network policy: nope.'
+    sock.write(`HTTP/1.1 403 Forbidden\r\nX-Zwrm-Egress: blocked\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
+  })
+  const gwPort = await listen(gw)
+  const router = await runRouter({ port: 18994, gatewayBase: `http://127.0.0.1:${gwPort}`, routesOpts, log: () => {} })
+  try {
+    const a = await connectVia(18994, 'vanish.test:443')
+    assert.match(a.status, /502/)
+    a.sock.destroy()
+    const t0 = Date.now()
+    const b = await connectVia(18994, 'nope.test:443')
+    assert.match(b.status, /403/)
+    assert.ok(Date.now() - t0 < 500, `refusal took ${Date.now() - t0} ms`)
+    b.sock.destroy()
+    assert.match(router.status().blocked[0].reason, /nope\.$/)
+  } finally {
+    router.close(); gw.close()
+  }
+})
