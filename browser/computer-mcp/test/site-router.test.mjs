@@ -77,3 +77,33 @@ test('router: chosen sites go through the authenticated proxy, others direct; sw
     router.close(); site.close(); upstream.close()
   }
 })
+
+test('review: a bad CONNECT port is a 400, not a crash; health answers; a mid-stream reset adds no 502', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'router-'))
+  const routesOpts = { defaultsFile: path.join(dir, 'd.json'), routesFile: path.join(dir, 'r.json') }
+  // A site that sends a little "TLS" and then resets the connection.
+  const site = net.createServer((s) => { s.on('error', () => {}); s.write('TLSDATA'); setTimeout(() => s.resetAndDestroy(), 100) })
+  const sitePort = await listen(site)
+  const router = await runRouter({ port: 18991, upstreamValue: 'http://127.0.0.1:1', routesOpts, log: () => {} })
+  try {
+    for (const bad of ['example.com:99999', '127.0.0.1:65536', 'example.com:0']) {
+      const r = await connectVia(18991, bad)
+      assert.match(r.status, /400/, bad)
+      r.sock.destroy()
+    }
+    const health = await fetch('http://127.0.0.1:18991/__zwrm/health').then((x) => x.text())
+    assert.equal(health, 'zwrm-site-router', 'the router still answers after bad requests')
+
+    const got = await new Promise((resolve) => {
+      const s = net.connect(18991, '127.0.0.1', () => s.write(`CONNECT 127.0.0.1:${sitePort} HTTP/1.1\r\n\r\n`))
+      let buf = ''
+      s.on('data', (d) => { buf += d })
+      s.on('close', () => resolve(buf))
+      s.on('error', () => {})
+    })
+    assert.match(got, /^HTTP\/1\.1 200 Connection Established\r\n\r\nTLSDATA/)
+    assert.doesNotMatch(got, /502/, 'an upstream reset after the 200 must not inject a 502 into the tunnel')
+  } finally {
+    router.close(); site.close()
+  }
+})

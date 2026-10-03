@@ -14,37 +14,45 @@
 // "meinestadt.de" through the proxy with "immobilien.meinestadt.de" direct
 // sends only that subdomain direct. Workspace choices override the defaults.
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rmdir, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 
 export const DEFAULTS_FILE = '/etc/zwrm/browser/proxy-sites.json'
 export const ROUTES_FILE = path.join(process.env.HOME || '/home/agent', '.zwrm/browser/routes.json')
 
-const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
+const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/
 
 // normalizeDomain accepts a domain or a URL and returns the bare host
 // without a leading "www.", or throws.
 export function normalizeDomain(input) {
-  let host = String(input || '').trim().toLowerCase()
-  if (host.includes('://')) {
-    try {
-      host = new URL(host).hostname
-    } catch {
-      throw new Error(`not a domain or URL: ${input}`)
-    }
+  let host = String(input || '').trim().toLowerCase().replace(/^\*\./, '')
+  // Parse as a URL either way: it strips scheme, path and port, and turns an
+  // internationalized name (münchen.de) into its punycode form.
+  try {
+    host = new URL(host.includes('://') ? host : `http://${host}`).hostname
+  } catch {
+    throw new Error(`not a domain or URL: ${input}`)
   }
-  host = host.replace(/^\*\./, '').replace(/\.$/, '').replace(/^www\./, '')
+  host = host.replace(/\.$/, '').replace(/^www\./, '')
   if (!DOMAIN_RE.test(host)) throw new Error(`not a domain: ${input}`)
   return host
 }
 
 const uniq = (list) => [...new Set(list)].sort()
 
-async function readJSON(file) {
+async function readJSON(file, log = () => {}) {
+  let text
   try {
-    const v = JSON.parse(await readFile(file, 'utf8'))
+    text = await readFile(file, 'utf8')
+  } catch {
+    return {} // no file yet
+  }
+  try {
+    const v = JSON.parse(text)
     return v && typeof v === 'object' ? v : {}
   } catch {
+    log(`ignoring ${file}: not valid JSON`)
     return {}
   }
 }
@@ -53,9 +61,9 @@ const domains = (list) => (Array.isArray(list) ? list : []).flatMap((d) => {
   try { return [normalizeDomain(d)] } catch { return [] }
 })
 
-export async function loadRoutes({ defaultsFile = DEFAULTS_FILE, routesFile = ROUTES_FILE } = {}) {
-  const defaults = domains((await readJSON(defaultsFile)).proxy)
-  const ws = await readJSON(routesFile)
+export async function loadRoutes({ defaultsFile = DEFAULTS_FILE, routesFile = ROUTES_FILE, log } = {}) {
+  const defaults = domains((await readJSON(defaultsFile, log)).proxy)
+  const ws = await readJSON(routesFile, log)
   const proxy = domains(ws.proxy)
   const direct = domains(ws.direct)
   return { defaults: uniq(defaults), proxy: uniq(proxy), direct: uniq(direct) }
@@ -90,8 +98,39 @@ export function routeFor(host, rules) {
   return best ? best[1] : 'direct'
 }
 
+// Writes are serialized: in this process by a promise chain, across
+// processes (two sessions' `network` servers) by a lock directory, so
+// concurrent changes never lose one another.
+let writeChain = Promise.resolve()
+
+async function withLock(routesFile, fn) {
+  const lock = `${routesFile}.lock`
+  await mkdir(path.dirname(routesFile), { recursive: true })
+  for (let i = 0; ; i++) {
+    try {
+      await mkdir(lock)
+      break
+    } catch (err) {
+      if (err?.code !== 'EEXIST') throw err
+      if (i > 50) { await rmdir(lock).catch(() => {}); continue } // stale (holder died): ~5 s
+      await new Promise((r) => setTimeout(r, 100))
+    }
+  }
+  try {
+    return await fn()
+  } finally {
+    await rmdir(lock).catch(() => {})
+  }
+}
+
 // setRoute records the agent's choice for a domain in the workspace file.
-export async function setRoute(domain, route, { defaultsFile = DEFAULTS_FILE, routesFile = ROUTES_FILE } = {}) {
+export function setRoute(domain, route, opts = {}) {
+  const p = writeChain.then(() => withLock(opts.routesFile || ROUTES_FILE, () => setRouteNow(domain, route, opts)))
+  writeChain = p.catch(() => {})
+  return p
+}
+
+async function setRouteNow(domain, route, { defaultsFile = DEFAULTS_FILE, routesFile = ROUTES_FILE } = {}) {
   const d = normalizeDomain(domain)
   if (route !== 'proxy' && route !== 'direct') throw new Error(`unknown route ${route}`)
   const routes = await loadRoutes({ defaultsFile, routesFile })
@@ -110,8 +149,7 @@ export async function setRoute(domain, route, { defaultsFile = DEFAULTS_FILE, ro
   const others = ruleMap({ defaults: routes.defaults.filter((x) => x !== d), proxy, direct })
   const otherwise = routes.defaults.includes(d) ? 'proxy' : routeFor(d, others)
   if (otherwise !== route) (route === 'proxy' ? proxy : direct).push(d)
-  await mkdir(path.dirname(routesFile), { recursive: true })
-  const tmp = `${routesFile}.tmp`
+  const tmp = `${routesFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   await writeFile(tmp, JSON.stringify({ proxy: uniq(proxy), direct: uniq(direct) }, null, 2) + '\n')
   await rename(tmp, routesFile)
   return { domain: d, route, sites: effectiveProxySites(await loadRoutes({ defaultsFile, routesFile })) }

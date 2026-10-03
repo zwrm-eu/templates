@@ -60,3 +60,15 @@ test('most specific rule wins; a choice covers its subdomains (review of the ipi
   assert.equal(await route('api.example.org'), 'proxy')
   assert.equal(await route('example.org'), 'proxy')
 })
+
+test('review: concurrent setRoute calls all persist; IDN and host:port parse', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'routes-'))
+  const opts = { defaultsFile: path.join(dir, 'defaults.json'), routesFile: path.join(dir, 'routes.json') }
+  const names = Array.from({ length: 10 }, (_, i) => `site${i}.example`)
+  const results = await Promise.allSettled(names.map((n) => setRoute(n, 'proxy', opts)))
+  assert.ok(results.every((r) => r.status === 'fulfilled'), 'no concurrent write may fail')
+  assert.deepEqual((await loadRoutes(opts)).proxy, names.sort(), 'no concurrent write may be lost')
+  assert.equal(normalizeDomain('münchen.de'), 'xn--mnchen-3ya.de')
+  assert.equal(normalizeDomain('example.com:8080'), 'example.com')
+  assert.equal(normalizeDomain('пример.рф'), 'xn--e1afmkfd.xn--p1ai')
+})

@@ -8,7 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { effectiveProxySites, loadRoutes, normalizeDomain, setRoute } from './routes.mjs'
-import { ROUTER_PORT } from './site-router.mjs'
+import { ROUTER_PORT, ensureRouter } from './site-router.mjs'
 
 const configured = Boolean(process.env.BROWSER_PROXY)
 
@@ -21,6 +21,7 @@ const NOT_CONFIGURED =
 // changed), so a reload uses the new route at once. The router also re-reads
 // on its own every few seconds, so a failure here only delays the switch.
 async function notifyRouter() {
+  await ensureRouter().catch(() => {}) // a router that died comes back
   try {
     await fetch(`http://127.0.0.1:${ROUTER_PORT}/__zwrm/reload`, { method: 'POST', signal: AbortSignal.timeout(2000) })
   } catch {}
@@ -36,6 +37,11 @@ server.registerTool('proxy_status', {
   inputSchema: {},
 }, async () => {
   if (!configured) return text(NOT_CONFIGURED)
+  const state = await ensureRouter().catch(() => 'down')
+  if (state !== 'up') {
+    return text('The browser\'s proxy router is not running, so the browser cannot reach any site. ' +
+      'Close the browser (browser_close) and open the page again; if that does not help, tell the person.', true)
+  }
   const sites = effectiveProxySites(await loadRoutes())
   return text(`A proxy is configured. Sites routed through it: ${sites.length ? sites.join(', ') : 'none'}. ` +
     'All other sites go direct.')
@@ -45,7 +51,9 @@ server.registerTool('use_proxy', {
   description: 'Route a site through the proxy from now on, for this workspace (remembered across sessions). ' +
     'Use it when a site blocks the browser: "Access Denied", "You don\'t have permission", an endless ' +
     '"Just a moment…" or "verify you are human" check, ERR_HTTP2_PROTOCOL_ERROR or connection resets on one ' +
-    'site while others load. Then reload the page. Do not ask the person first; this is a routine switch.',
+    'site while others load. Then reload the page. Do not ask the person first; this is a routine switch. ' +
+    'Not for a mistyped or unreachable address (ERR_NAME_NOT_RESOLVED, or ERR_TUNNEL_CONNECTION_FAILED on a ' +
+    'site you have not checked exists): a proxy does not fix those.',
   inputSchema: { domain: z.string().describe('The site, e.g. "meinestadt.de" or a URL; subdomains are included') },
 }, async ({ domain }) => {
   if (!configured) return text(NOT_CONFIGURED, true)

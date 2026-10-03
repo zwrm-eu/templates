@@ -25,6 +25,9 @@ import { effectiveProxySites, loadRoutes, routeFor, ruleMap } from './routes.mjs
 
 export const ROUTER_PORT = 18080
 const RELOAD_EVERY_MS = 5000
+// GET /__zwrm/health answers this, so --ensure can tell the router from any
+// other program that happens to hold the port.
+const HEALTH_MARKER = 'zwrm-site-router'
 
 // parseUpstream validates BROWSER_PROXY: http(s)://[user:pass@]host:port.
 export function parseUpstream(value) {
@@ -47,11 +50,28 @@ export function parseUpstream(value) {
   }
 }
 
-const listening = () => new Promise((resolve) => {
-  const s = net.connect(ROUTER_PORT, '127.0.0.1')
-  s.once('connect', () => { s.destroy(); resolve(true) })
-  s.once('error', () => resolve(false))
-})
+// routerState: 'up' (our router answers), 'down' (nothing listens) or
+// 'foreign' (something else holds the port).
+export async function routerState(port = ROUTER_PORT) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/__zwrm/health`, { signal: AbortSignal.timeout(1500) })
+    return (await r.text()).trim() === HEALTH_MARKER ? 'up' : 'foreign'
+  } catch (err) {
+    return err?.cause?.code === 'ECONNREFUSED' ? 'down' : 'foreign'
+  }
+}
+
+// ensureRouter starts the router detached unless it already runs; the
+// `network` tools call it too, so a router that died mid-session comes back.
+export async function ensureRouter() {
+  let state = await routerState()
+  if (state === 'down') {
+    const log = openSync('/tmp/zwrm-site-router.log', 'a')
+    spawn(process.execPath, [fileURLToPath(import.meta.url)], { detached: true, stdio: ['ignore', log, log], env: process.env }).unref()
+    for (let i = 0; i < 50 && (state = await routerState()) === 'down'; i++) await new Promise((r) => setTimeout(r, 100))
+  }
+  return state
+}
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]
 const mode = isMain ? process.argv[2] : 'imported'
@@ -65,14 +85,22 @@ if (mode === '--check') {
   process.exit(0)
 }
 if (mode === '--ensure') {
-  if (!(await listening())) {
-    const log = openSync('/tmp/zwrm-site-router.log', 'a')
-    spawn(process.execPath, [fileURLToPath(import.meta.url)], { detached: true, stdio: ['ignore', log, log], env: process.env }).unref()
-    for (let i = 0; i < 50 && !(await listening()); i++) await new Promise((r) => setTimeout(r, 100))
-  }
-  process.exit((await listening()) ? 0 : 1)
+  const state = await ensureRouter()
+  if (state === 'foreign') process.stderr.write(`zwrm-browser-mcp: another program holds 127.0.0.1:${ROUTER_PORT}; the browser's proxy router cannot start\n`)
+  process.exit(state === 'up' ? 0 : 1)
 }
-if (mode === undefined) await runRouter()
+if (mode === undefined) {
+  // One bad connection must never take the router (and with it all of the
+  // browser's network) down: log and keep serving.
+  process.on('uncaughtException', (err) => process.stderr.write(`[site-router] uncaught: ${err?.stack || err}\n`))
+  try {
+    await runRouter()
+  } catch (err) {
+    // A second router racing the first loses the port: that's fine.
+    if (err?.code === 'EADDRINUSE') process.exit(0)
+    throw err
+  }
+}
 
 export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.env.BROWSER_PROXY, routesOpts, log = (m) => process.stderr.write(`[site-router] ${m}\n`) } = {}) {
   const upstream = parseUpstream(upstreamValue)
@@ -80,8 +108,12 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
   let rules = ruleMap(routes)
   const tunnels = new Set() // {host, via, sockets}
 
-  const reload = async () => {
-    routes = await loadRoutes(routesOpts)
+  // Reloads apply in the order they started, so a slow stale read can never
+  // overwrite a newer one.
+  let reloadChain = Promise.resolve()
+  const reload = () => (reloadChain = reloadChain.then(applyRoutes, applyRoutes))
+  const applyRoutes = async () => {
+    routes = await loadRoutes({ ...routesOpts, log })
     rules = ruleMap(routes)
     for (const t of tunnels) {
       if (routeFor(t.host, rules) !== t.via) {
@@ -120,6 +152,10 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
   }
 
   const server = http.createServer((req, res) => {
+    if (req.url === '/__zwrm/health') {
+      res.end(HEALTH_MARKER)
+      return
+    }
     if (req.url.startsWith('/__zwrm/reload')) {
       reload().then(() => res.end(JSON.stringify({ sites: effectiveProxySites(routes) })), (err) => { res.writeHead(500); res.end(String(err)) })
       return
@@ -134,8 +170,14 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
       ? { host: upstream.host, port: upstream.port, path: req.url, method: req.method, headers: upstream.auth ? { ...headers, 'proxy-authorization': upstream.auth } : headers }
       : { host: target.hostname, port: target.port || 80, path: `${target.pathname}${target.search}`, method: req.method, headers }
     const client = via === 'proxy' && upstream.tls ? https : http
-    const up = client.request(opts, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res) })
-    up.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end() })
+    const up = client.request(opts, (r) => {
+      res.writeHead(r.statusCode, r.headers)
+      r.pipe(res)
+      // A response cut off mid-body must end the browser's request too.
+      r.on('aborted', () => res.destroy())
+      r.on('error', () => res.destroy())
+    })
+    up.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end() } })
     req.pipe(up)
   })
 
@@ -143,13 +185,22 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
     const target = req.url
     const host = target.replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
     const port = Number(target.match(/:(\d+)$/)?.[1] || 443)
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      client.end('HTTP/1.1 400 Bad Request\r\n\r\n')
+      return
+    }
     const via = routeFor(host, rules)
     const tunnel = { host, via, sockets: [client] }
     tunnels.add(tunnel)
     const done = () => { tunnels.delete(tunnel); for (const s of tunnel.sockets) s.destroy() }
     client.on('error', done)
     client.on('close', done)
+    let open = false
     const established = (up, early) => {
+      open = true
+      // From here on, upstream errors close the tunnel; they must not write
+      // a 502 into an established stream.
+      up.removeAllListeners('error')
       tunnel.sockets.push(up)
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
       if (early?.length) client.write(early)
@@ -160,15 +211,20 @@ export async function runRouter({ port = ROUTER_PORT, upstreamValue = process.en
       up.on('close', done)
     }
     const fail = (why) => {
+      if (open) return done()
       log(`${via} ${target}: ${why}`)
       client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n')
       done()
     }
-    if (via === 'proxy') {
-      dialUpstream(target, established, fail)
-    } else {
-      const up = net.connect(port, host, () => established(up))
-      up.once('error', (err) => fail(err.message))
+    try {
+      if (via === 'proxy') {
+        dialUpstream(target, established, fail)
+      } else {
+        const up = net.connect(port, host, () => established(up))
+        up.once('error', (err) => fail(err.message))
+      }
+    } catch (err) {
+      fail(err.message)
     }
   })
 
